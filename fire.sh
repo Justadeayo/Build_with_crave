@@ -6,7 +6,7 @@ export TZ="Africa/Lagos"
 # ==============================================================================
 # 0. MASTER IDENTITY POINTER (SINGLE SECRET GIST)
 # ==============================================================================
-PROFILE_URL="${PROFILE_URL:-https://gist.githubusercontent.com/Justadeayo/427bbc603854c1d78f385585a44933b9/raw/00106e5e0d13d95dcd6300f4bbe1a4e2b520d521/plain.txt}"
+PROFILE_URL="${PROFILE_URL:-https://gist.githubusercontent.com/Justadeayo/427bbc603854c1d78f385585a44933b9/raw/90f4016b2e43134826e7404d3a6e1ce94e4e9992/plain.txt}"
 
 echo "🌐 Sourcing target profile into memory..."
 if [ -n "${PROFILE_URL}" ]; then
