@@ -6,7 +6,7 @@ export TZ="Africa/Lagos"
 # ==============================================================================
 # 0. MASTER IDENTITY POINTER (SINGLE SECRET GIST)
 # ==============================================================================
-PROFILE_URL="${PROFILE_URL:-https://gist.githubusercontent.com/Justadeayo/427bbc603854c1d78f385585a44933b9/raw/90f4016b2e43134826e7404d3a6e1ce94e4e9992/plain.txt}"
+PROFILE_URL="${PROFILE_URL:-https://gist.githubusercontent.com/Justadeayo/}"
 
 echo "🌐 Sourcing target profile into memory..."
 if [ -n "${PROFILE_URL}" ]; then
@@ -33,18 +33,6 @@ START_TIME="$(date +%s)"
 
 TMP_DIR="$(mktemp -d -t build-XXXXXX 2>/dev/null || mktemp -d)"
 
-# ==============================================================================
-# SECURE CLEANUP FUNCTION & TRAP
-# ==============================================================================
-cleanup() {
-  echo "🧹 Wiping temporary files, keys, and sensitive environment variables..."
-  rm -rf "${TMP_DIR}" 2>/dev/null || true
-  rm -rf vendor/lineage-priv/keys/*.pk8 vendor/lineage-priv/keys/*.x509.pem 2>/dev/null || true
-  unset DS CT PROFILE_URL ASSET_URL
-}
-trap cleanup EXIT INT TERM
-
-
 get_wat_time() {
   TZ="Africa/Lagos" date +'%Y-%m-%d %H:%M:%S WAT'
 }
@@ -63,6 +51,41 @@ tg_send() {
   fi
 }
 
+# ==============================================================================
+# SECURE CLEANUP FUNCTION & ERROR TRAP
+# ==============================================================================
+cleanup() {
+  local exit_code=$?
+
+  if [ "$exit_code" -ne 0 ]; then
+    echo "❌ Script aborted with exit code ${exit_code}."
+    tg_send "🚨 *Build Failed!*
+📱 *Device:* \`${DEVICE}\`
+📦 *ROM:* \`${ROM_NAME}\`
+⚠️ *Exit Code:* \`${exit_code}\`
+⏰ *Failed at:* $(get_wat_time)"
+  fi
+
+  echo "🧹 Wiping temporary files, keys, and sensitive environment variables..."
+  rm -rf "${TMP_DIR}" 2>/dev/null || true
+  rm -rf vendor/lineage-priv/keys/*.pk8 vendor/lineage-priv/keys/*.x509.pem 2>/dev/null || true
+  unset DS CT PROFILE_URL ASSET_URL
+}
+trap cleanup EXIT INT TERM
+
+# ==============================================================================
+# STEP EXECUTION WRAPPER
+# ==============================================================================
+run_step() {
+  local step_name="$1"
+  shift
+  echo "--> Executing: ${step_name}..."
+  if ! "$@"; then
+    echo "❌ Step failed: ${step_name}"
+    exit 1
+  fi
+}
+
 echo "========================================="
 echo " Starting $ROM_NAME Build for $DEVICE "
 echo "========================================="
@@ -77,29 +100,32 @@ tg_send "🚀 *Build Started!*
 echo "--> Cleaning up workspace and hardware paths..."
 find .repo/ -name "*.lock" -delete 2>/dev/null || true
 rm -rf .repo/local_manifests \
+       vendor/MiuiCamera \
        hardware/xiaomi \
        hardware/dolby \
        vendor/lineage-priv/keys 2>/dev/null || true
 
-echo "--> Initializing $ROM_NAME repository..."
-repo init -u "${REPO_MANIFEST_URL}" -b "${REPO_MANIFEST_BRANCH}" --git-lfs --depth=1
+run_step "Initializing Repository" repo init -u "${REPO_MANIFEST_URL}" -b "${REPO_MANIFEST_BRANCH}" --git-lfs --depth=1
 
 echo "--> Fetching local device manifests..."
 git clone --depth=1 -b "${MANIFEST_LOCAL_BRANCH}" "${MANIFEST_LOCAL_REPO}" .repo/local_manifests || true
 
-echo "--> Syncing repositories..."
 if [ -f /opt/crave/resync.sh ]; then
-  /opt/crave/resync.sh
+  run_step "Resyncing Sources" /opt/crave/resync.sh
 else
-  repo sync -c --force-sync --no-tags --no-clone-bundle -j"${JOBS}"
+  run_step "Syncing Sources" repo sync -c --force-sync --no-tags --no-clone-bundle -j"${JOBS}"
 fi
 
 # ==============================================================================
 # 2. HARDWARE TREES & PATCHES
 # ==============================================================================
 echo "--> Fetching custom hardware repos..."
-rm -rf hardware/xiaomi && git clone https://github.com/Evolution-X-Devices/hardware_xiaomi -b bka-no-dolby hardware/xiaomi && rm -rf hardware/xiaomi/packages/DSPVolumeSynchronizer
-rm -rf hardware/dolby && git clone https://github.com/adi8900/hardware_dolby -b lunaris hardware/dolby
+rm -rf hardware/xiaomi
+run_step "Cloning Xiaomi Hardware" git clone https://github.com/Evolution-X-Devices/hardware_xiaomi -b bka-no-dolby hardware/xiaomi
+rm -rf hardware/xiaomi/packages/DSPVolumeSynchronizer
+
+rm -rf hardware/dolby
+run_step "Cloning Dolby Hardware" git clone https://github.com/adi8900/hardware_dolby -b lunaris hardware/dolby
 echo "✅ Hardware paths configured!"
 
 # ==============================================================================
@@ -141,22 +167,26 @@ else
 fi
 
 # ==============================================================================
-# 4. BUILD COMPILATION
+# 4. BUILD COMPILATION (FORCE WAT TIMESTAMPS)
 # ==============================================================================
 echo "--> Setting up build environment..."
+
+# Enforce WAT timezone across Bash and the AOSP / Soong build system
+export TZ="Africa/Lagos"
+export LC_ALL="C.UTF-8"
+export BUILD_DATETIME_FILE="${TMP_DIR}/build_date"
+date +%s > "${BUILD_DATETIME_FILE}"
+
 . build/envsetup.sh
 
-echo "--> Selecting target device combo..."
-lunch "lineage_${DEVICE}-bp4a-user"
+run_step "Selecting Target Device" lunch "lineage_${DEVICE}-bp4a-user"
 
-echo "--> Performing installclean..."
-make installclean
+run_step "Performing Installclean" make installclean
 
-echo "--> Starting compilation..."
 if command -v mka >/dev/null 2>&1; then
-  mka derp -j"${JOBS}"
+  run_step "Compiling ROM" mka derp -j"${JOBS}"
 else
-  make -j"${JOBS}" derp
+  run_step "Compiling ROM" make -j"${JOBS}" derp
 fi
 
 END_TIME="$(date +%s)"
@@ -164,7 +194,7 @@ DUR=$((END_TIME - START_TIME))
 BUILD_TIME="$((DUR/3600))h $(((DUR%3600)/60))m $((DUR%60))s"
 
 # ==============================================================================
-# 5. DYNAMIC ARTIFACT DISPATCHER (RANDOM GOFILE)
+# 5. DYNAMIC ARTIFACT DISPATCHER (GOFILE)
 # ==============================================================================
 gofile_upload() {
   local FILE="$1"
@@ -174,7 +204,6 @@ gofile_upload() {
   local RESPONSE=""
   local LINK=""
 
-  # Swapped: Primary URL is now the more reliable upload endpoint
   local PRIMARY_URL="https://upload.gofile.io/uploadfile"
   local ALT_URL="https://api.gofile.io/contents/uploadfile"
 
@@ -196,6 +225,7 @@ gofile_upload() {
   done
   return 1
 }
+
 # ==============================================================================
 # 6. ARTIFACT HANDLING & DISPATCH NOTIFICATION
 # ==============================================================================
