@@ -6,7 +6,7 @@ export TZ="Africa/Lagos"
 # ==============================================================================
 # 0. MASTER IDENTITY POINTER (SINGLE SECRET GIST)
 # ==============================================================================
-PROFILE_URL="${PROFILE_URL:-https://gist.githubusercontent.com/Justadeayo/}"
+PROFILE_URL="${PROFILE_URL:-https://gist.githubusercontent.com/Justadeayo/427bbc603854c1d78f385585a44933b9/raw/90f4016b2e43134826e7404d3a6e1ce94e4e9992/plain.txt}"
 
 echo "🌐 Sourcing target profile into memory..."
 if [ -n "${PROFILE_URL}" ]; then
@@ -21,7 +21,7 @@ export BUILD_USERNAME="${BUILD_USERNAME:-Justus26}"
 export BUILD_HOSTNAME="${BUILD_HOSTNAME:-crave}"
 
 REPO_MANIFEST_URL="https://github.com/DerpFest-AOSP/android_manifest"
-REPO_MANIFEST_BRANCH="16.2"
+REPO_MANIFEST_BRANCH="17"
 MANIFEST_LOCAL_REPO="https://github.com/Justadeayo/Manifest.git"
 MANIFEST_LOCAL_BRANCH="main"
 
@@ -32,6 +32,7 @@ SM="Default"
 START_TIME="$(date +%s)"
 
 TMP_DIR="$(mktemp -d -t build-XXXXXX 2>/dev/null || mktemp -d)"
+BUILD_LOG_FILE="${TMP_DIR}/build.log"
 
 get_wat_time() {
   TZ="Africa/Lagos" date +'%Y-%m-%d %H:%M:%S WAT'
@@ -51,6 +52,18 @@ tg_send() {
   fi
 }
 
+tg_send_file() {
+  local file_path="$1"
+  local caption="$2"
+  if [ -n "${DS}" ] && [ -n "${CT}" ] && [ -f "${file_path}" ]; then
+    curl -sS -X POST "https://api.telegram.org/bot${DS}/sendDocument" \
+      -F chat_id="${CT}" \
+      -F document=@"${file_path}" \
+      -F caption="${caption}" \
+      -F parse_mode="Markdown" >/dev/null 2>&1 || true
+  fi
+}
+
 # ==============================================================================
 # SECURE CLEANUP FUNCTION & ERROR TRAP
 # ==============================================================================
@@ -61,9 +74,21 @@ cleanup() {
     echo "❌ Script aborted with exit code ${exit_code}."
     tg_send "🚨 *Build Failed!*
 📱 *Device:* \`${DEVICE}\`
-📦 *ROM:* \`${ROM_NAME}\`
+📦 *ROM:* \`${ROM_NAME}\` (Android 17)
 ⚠️ *Exit Code:* \`${exit_code}\`
 ⏰ *Failed at:* $(get_wat_time)"
+
+    # Dispatch extracted failure snippet and build log snippet
+    if [ -f "${BUILD_LOG_FILE}" ]; then
+      local ERROR_SNIPPET_FILE="${TMP_DIR}/error_summary.log"
+      
+      echo "=== BUILD FAILURE SUMMARY ===" > "${ERROR_SNIPPET_FILE}"
+      grep -E -i "FAILED:|error:|ninja: build stopped" "${BUILD_LOG_FILE}" | tail -n 25 >> "${ERROR_SNIPPET_FILE}" 2>/dev/null || true
+      echo -e "\n=== LAST 100 LINES OF BUILD LOG ===" >> "${ERROR_SNIPPET_FILE}"
+      tail -n 100 "${BUILD_LOG_FILE}" >> "${ERROR_SNIPPET_FILE}" 2>/dev/null || true
+
+      tg_send_file "${ERROR_SNIPPET_FILE}" "❌ *Build Failure Log Snippet for ${DEVICE}*"
+    fi
   fi
 
   echo "🧹 Wiping temporary files, keys, and sensitive environment variables..."
@@ -87,11 +112,11 @@ run_step() {
 }
 
 echo "========================================="
-echo " Starting $ROM_NAME Build for $DEVICE "
+echo " Starting $ROM_NAME (Android 17) Build for $DEVICE "
 echo "========================================="
 tg_send "🚀 *Build Started!*
 📱 *Device:* \`${DEVICE}\`
-📦 *ROM:* \`${ROM_NAME}\`
+📦 *ROM:* \`${ROM_NAME}\` (Android 17)
 ⏰ *Started at:* $(get_wat_time)"
 
 # ==============================================================================
@@ -117,9 +142,22 @@ else
 fi
 
 # ==============================================================================
-# 2. HARDWARE TREES & PATCHES
+# 2. HARDWARE TREES & FRAMEWORKS/BASE PATCH
 # ==============================================================================
-sed -i 's/SQLiteTokenizer\.OPTION_CHECK_BRACKETS/0/g' packages/providers/ContactsProvider/src/com/android/providers/contacts/util/SelectionBuilder.java
+echo "--> Checking frameworks/base SQLiteTokenizer patch..."
+if [ -d frameworks/base ]; then
+  if grep -q "OPTION_CHECK_BRACKETS" frameworks/base/core/java/android/database/sqlite/SQLiteTokenizer.java 2>/dev/null; then
+    echo "✅ SQLiteTokenizer already patched, skipping."
+  else
+    echo "🔧 Applying upstream SQLiteTokenizer patch to frameworks/base..."
+    curl -sSL "https://github.com/xc112lg/android_frameworks_base/commit/025f44b3413aa9dd859b4dab03241dabf573036f.patch" | git -C frameworks/base am || {
+      echo "⚠️ git am failed, attempting git apply fallback..."
+      curl -sSL "https://github.com/xc112lg/android_frameworks_base/commit/025f44b3413aa9dd859b4dab03241dabf573036f.patch" | git -C frameworks/base apply || true
+    }
+    echo "✅ SQLiteTokenizer patch operation complete."
+  fi
+fi
+
 echo "--> Fetching custom hardware repos..."
 rm -rf hardware/xiaomi
 run_step "Cloning Xiaomi Hardware" git clone https://github.com/Evolution-X-Devices/hardware_xiaomi -b bka-no-dolby hardware/xiaomi
@@ -168,11 +206,10 @@ else
 fi
 
 # ==============================================================================
-# 4. BUILD COMPILATION (FORCE WAT TIMESTAMPS)
+# 4. BUILD COMPILATION (FORCE WAT TIMESTAMPS & CP2A TARGET)
 # ==============================================================================
 echo "--> Setting up build environment..."
 
-# Enforce WAT timezone across Bash and the AOSP / Soong build system
 export TZ="Africa/Lagos"
 export LC_ALL="C.UTF-8"
 export BUILD_DATETIME_FILE="${TMP_DIR}/build_date"
@@ -180,14 +217,15 @@ date +%s > "${BUILD_DATETIME_FILE}"
 
 . build/envsetup.sh
 
-run_step "Selecting Target Device" lunch "lineage_${DEVICE}-bp4a-user"
+run_step "Selecting Target Device" lunch "lineage_${DEVICE}-cp2a-user"
 
 run_step "Performing Installclean" make installclean
 
+echo "--> Starting compilation output logging..."
 if command -v mka >/dev/null 2>&1; then
-  run_step "Compiling ROM" mka derp -j"${JOBS}"
+  run_step "Compiling ROM" bash -c "mka derp -j${JOBS} 2>&1 | tee '${BUILD_LOG_FILE}'"
 else
-  run_step "Compiling ROM" make -j"${JOBS}" derp
+  run_step "Compiling ROM" bash -c "make -j${JOBS} derp 2>&1 | tee '${BUILD_LOG_FILE}'"
 fi
 
 END_TIME="$(date +%s)"
@@ -275,12 +313,13 @@ if [ -f "${OUT_DIR}/violet.json" ] && [ -n "${DS:-}" ] && [ -n "${CT:-}" ]; then
   curl -sS -X POST "https://api.telegram.org/bot${DS}/sendDocument" \
     -F chat_id="${CT}" \
     -F document=@"${OUT_DIR}/violet.json" \
-    -F caption="📄 *OTA JSON Metadata for ${DEVICE}*" \
+    -F caption="📄 *OTA JSON Metadata for ${DEVICE} (Android 17)*" \
     -F parse_mode="Markdown" >/dev/null 2>&1 || true
 fi
 
 tg_send "🎉 *Build Finished Successfully!*
 📱 *Device:* \`${DEVICE}\`
+📦 *ROM:* \`${ROM_NAME}\` (Android 17)
 🔑 *Profile Mode:* \`${SM}\` (${KEY_COUNT:-0} keys)
 ⏱ *Compilation Time:* \`${BUILD_TIME}\`
 📏 *Size:* \`${ROM_SIZE}\`
