@@ -4,7 +4,7 @@ set -e
 export TZ="Africa/Lagos"
 
 # ==============================================================================
-# 0. MASTER IDENTITY POINTER (SINGLE SECRET GIST)
+# 0. MASTER IDENTITY POINTER
 # ==============================================================================
 PROFILE_URL="${PROFILE_URL:-https://gist.githubusercontent.com/Justadeayo/427bbc603854c1d78f385585a44933b9/raw/90f4016b2e43134826e7404d3a6e1ce94e4e9992/plain.txt}"
 
@@ -120,15 +120,17 @@ tg_send "🚀 *Build Started!*
 ⏰ *Started at:* $(get_wat_time)"
 
 # ==============================================================================
-# 1. CLEANUP & SOURCE SYNC
+# 1. CLEANUP & SOURCE SYNC (PREBUILTS PURGE & PERMISSION SAFE)
 # ==============================================================================
-echo "--> Cleaning up workspace and hardware paths..."
+echo "--> Cleaning up workspace lockfiles, prebuilts, and local manifest paths..."
 find .repo/ -name "*.lock" -delete 2>/dev/null || true
-rm -rf .repo/local_manifests \
+
+rm -rf prebuilts/ \
        vendor/MiuiCamera \
        hardware/xiaomi \
        hardware/dolby \
-       vendor/lineage-priv/keys 2>/dev/null || true
+       vendor/lineage-priv/keys \
+       .repo/local_manifests 2>/dev/null || true
 
 run_step "Initializing Repository" repo init -u "${REPO_MANIFEST_URL}" -b "${REPO_MANIFEST_BRANCH}" --git-lfs --depth=1
 
@@ -136,9 +138,9 @@ echo "--> Fetching local device manifests..."
 git clone --depth=1 -b "${MANIFEST_LOCAL_BRANCH}" "${MANIFEST_LOCAL_REPO}" .repo/local_manifests || true
 
 if [ -f /opt/crave/resync.sh ]; then
-  run_step "Resyncing Sources" /opt/crave/resync.sh
+  run_step "Resyncing Sources via Crave" /opt/crave/resync.sh
 else
-  run_step "Syncing Sources" repo sync -c --force-sync --no-tags --no-clone-bundle -j"${JOBS}"
+  run_step "Syncing Sources" repo sync -c --force-sync --no-tags --no-clone-bundle --prune -j"${JOBS}"
 fi
 
 # ==============================================================================
