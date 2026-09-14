@@ -4,7 +4,7 @@ set -e
 export TZ="Africa/Lagos"
 
 # ==============================================================================
-# 0. MASTER IDENTITY POINTER (SINGLE SECRET GIST)
+# 0. MASTER IDENTITY POINTER
 # ==============================================================================
 PROFILE_URL="${PROFILE_URL:-https://gist.githubusercontent.com/Justadeayo/427bbc603854c1d78f385585a44933b9/raw/90f4016b2e43134826e7404d3a6e1ce94e4e9992/plain.txt}"
 
@@ -19,9 +19,10 @@ export DEVICE="${DEVICE:-violet}"
 export BUILD_TYPE="${BUILD_TYPE:-user}"
 export BUILD_USERNAME="${BUILD_USERNAME:-Justus26}"
 export BUILD_HOSTNAME="${BUILD_HOSTNAME:-crave}"
+export CCACHE="0"
 
 REPO_MANIFEST_URL="https://github.com/DerpFest-AOSP/android_manifest"
-REPO_MANIFEST_BRANCH="16.2"
+REPO_MANIFEST_BRANCH="17"
 MANIFEST_LOCAL_REPO="https://github.com/Justadeayo/Manifest.git"
 MANIFEST_LOCAL_BRANCH="main"
 
@@ -30,10 +31,6 @@ GOFILE_RETRY_MAX=8
 JOBS=$(nproc 2>/dev/null || echo 4)
 SM="Default"
 START_TIME="$(date +%s)"
-
-TMP_DIR="$(mktemp -d -t build-XXXXXX 2>/dev/null || mktemp -d)"
-cleanup() { rm -rf "${TMP_DIR}" 2>/dev/null || true; }
-trap cleanup EXIT
 
 get_wat_time() {
   TZ="Africa/Lagos" date +'%Y-%m-%d %H:%M:%S WAT'
@@ -53,43 +50,82 @@ tg_send() {
   fi
 }
 
+# ==============================================================================
+# SECURE CLEANUP FUNCTION & ERROR TRAP
+# ==============================================================================
+cleanup() {
+  local exit_code=$?
+
+  if [ "$exit_code" -ne 0 ]; then
+    echo "❌ Script aborted with exit code ${exit_code}."
+    tg_send "🚨 *Build Failed!*
+📱 *Device:* \`${DEVICE}\`
+📦 *ROM:* \`${ROM_NAME}\` (Android 17)
+⚠️ *Exit Code:* \`${exit_code}\`
+⏰ *Failed at:* $(get_wat_time)"
+  fi
+
+  echo "🧹 Wiping keys and sensitive environment variables..."
+  rm -rf vendor/lineage-priv/keys/*.pk8 vendor/lineage-priv/keys/*.x509.pem 2>/dev/null || true
+  unset DS CT PROFILE_URL ASSET_URL
+}
+trap cleanup EXIT INT TERM
+
+# ==============================================================================
+# STEP EXECUTION WRAPPER
+# ==============================================================================
+run_step() {
+  local step_name="$1"
+  shift
+  echo "--> Executing: ${step_name}..."
+  if ! "$@"; then
+    echo "❌ Step failed: ${step_name}"
+    exit 1
+  fi
+}
+
 echo "========================================="
-echo " Starting $ROM_NAME Build for $DEVICE "
+echo " Starting $ROM_NAME (Android 17) Build for $DEVICE "
 echo "========================================="
 tg_send "🚀 *Build Started!*
 📱 *Device:* \`${DEVICE}\`
-📦 *ROM:* \`${ROM_NAME}\`
+📦 *ROM:* \`${ROM_NAME}\` (Android 17)
 ⏰ *Started at:* $(get_wat_time)"
 
 # ==============================================================================
-# 1. CLEANUP & SOURCE SYNC
+# 1. CLEANUP & SOURCE SYNC (PREBUILTS PURGE & PERMISSION SAFE)
 # ==============================================================================
-echo "--> Cleaning up workspace and hardware paths..."
+echo "--> Cleaning up workspace lockfiles, prebuilts, and local manifest paths..."
 find .repo/ -name "*.lock" -delete 2>/dev/null || true
-rm -rf .repo/local_manifests \
+
+rm -rf vendor/MiuiCamera \
        hardware/xiaomi \
        hardware/dolby \
-       vendor/lineage-priv/keys 2>/dev/null || true
+       vendor/lineage-priv/keys \
+       .repo/local_manifests 2>/dev/null || true
 
-echo "--> Initializing $ROM_NAME repository..."
-repo init -u "${REPO_MANIFEST_URL}" -b "${REPO_MANIFEST_BRANCH}" --git-lfs --depth=1
+run_step "Initializing Repository" repo init -u "${REPO_MANIFEST_URL}" -b "${REPO_MANIFEST_BRANCH}" --git-lfs --depth=1
 
 echo "--> Fetching local device manifests..."
 git clone --depth=1 -b "${MANIFEST_LOCAL_BRANCH}" "${MANIFEST_LOCAL_REPO}" .repo/local_manifests || true
 
-echo "--> Syncing repositories..."
 if [ -f /opt/crave/resync.sh ]; then
-  /opt/crave/resync.sh
+  run_step "Resyncing Sources via Crave" /opt/crave/resync.sh
 else
-  repo sync -c --force-sync --no-tags --no-clone-bundle -j"${JOBS}"
+  run_step "Syncing Sources" repo sync -c --force-sync --no-tags --no-clone-bundle --prune -j"${JOBS}"
 fi
 
 # ==============================================================================
-# 2. HARDWARE TREES & PATCHES
+# 2. HARDWARE TREES
 # ==============================================================================
+
 echo "--> Fetching custom hardware repos..."
-rm -rf hardware/xiaomi && git clone https://github.com/Evolution-X-Devices/hardware_xiaomi -b bka-no-dolby hardware/xiaomi && rm -rf hardware/xiaomi/packages/DSPVolumeSynchronizer
-rm -rf hardware/dolby && git clone https://github.com/adi8900/hardware_dolby -b lunaris hardware/dolby
+rm -rf hardware/xiaomi
+run_step "Cloning Xiaomi Hardware" git clone https://github.com/Evolution-X-Devices/hardware_xiaomi -b bka-no-dolby hardware/xiaomi
+rm -rf hardware/xiaomi/packages/DSPVolumeSynchronizer
+
+rm -rf hardware/dolby
+run_step "Cloning Dolby Hardware" git clone https://github.com/adi8900/hardware_dolby -b lunaris hardware/dolby
 echo "✅ Hardware paths configured!"
 
 # ==============================================================================
@@ -131,30 +167,29 @@ else
 fi
 
 # ==============================================================================
-# 4. BUILD COMPILATION
+# 4. BUILD COMPILATION (FORCE WAT TIMESTAMPS & CP2A TARGET)
 # ==============================================================================
 echo "--> Setting up build environment..."
+
+export TZ="Africa/Lagos"
+export LC_ALL="C.UTF-8"
+
 . build/envsetup.sh
 
-echo "--> Selecting target device combo..."
-lunch "lineage_${DEVICE}-bp4a-user"
+lunch "lineage_${DEVICE}-cp2a-user"
 
-echo "--> Performing installclean..."
 make installclean
 
 echo "--> Starting compilation..."
-if command -v mka >/dev/null 2>&1; then
-  mka derp -j"${JOBS}"
-else
-  make -j"${JOBS}" derp
-fi
+
+m derp
 
 END_TIME="$(date +%s)"
 DUR=$((END_TIME - START_TIME))
 BUILD_TIME="$((DUR/3600))h $(((DUR%3600)/60))m $((DUR%60))s"
 
 # ==============================================================================
-# 5. DYNAMIC ARTIFACT DISPATCHER (RANDOM GOFILE)
+# 5. DYNAMIC ARTIFACT DISPATCHER (GOFILE)
 # ==============================================================================
 gofile_upload() {
   local FILE="$1"
@@ -164,15 +199,15 @@ gofile_upload() {
   local RESPONSE=""
   local LINK=""
 
-  local UP_URL="https://api.gofile.io/contents/uploadfile"
-  local ALT_URL="https://upload.gofile.io/uploadfile"
+  local PRIMARY_URL="https://upload.gofile.io/uploadfile"
+  local ALT_URL="https://api.gofile.io/contents/uploadfile"
 
   while [ "${ATTEMPT}" -lt "${GOFILE_RETRY_MAX}" ]; do
     ATTEMPT=$((ATTEMPT + 1))
-    local EP="$UP_URL"
+    local EP="$PRIMARY_URL"
     [ $((ATTEMPT % 2)) -eq 0 ] && EP="$ALT_URL"
 
-    echo "Uploading attempt ${ATTEMPT} to random GoFile server..."
+    echo "Uploading attempt ${ATTEMPT} to GoFile..."
     RESPONSE=$(curl --progress-bar -X POST -F "file=@${FILE}" "${EP}" || true)
 
     LINK=$(echo "$RESPONSE" | jq -r '.data.downloadPage // .data.link // empty' 2>/dev/null || true)
@@ -220,15 +255,27 @@ else
   UPLOAD_RESULTS+="⚠️ Build Output: No target archive detected."$'\n'
 fi
 
-# Dispatch extra build images if present
 if [ -f "${OUT_DIR}/recovery.img" ]; then
   echo "🔧 Dispatching recovery.img to GoFile..."
   REC_URL="$(gofile_upload "${OUT_DIR}/recovery.img" || true)"
   [ -n "${REC_URL}" ] && UPLOAD_RESULTS+="🔧 Recovery: ${REC_URL}"$'\n'
 fi
 
+# ==============================================================================
+# SEND VIOLET.JSON DIRECTLY TO TELEGRAM
+# ==============================================================================
+if [ -f "${OUT_DIR}/violet.json" ] && [ -n "${DS:-}" ] && [ -n "${CT:-}" ]; then
+  echo "📄 Sending violet.json to Telegram..."
+  curl -sS -X POST "https://api.telegram.org/bot${DS}/sendDocument" \
+    -F chat_id="${CT}" \
+    -F document=@"${OUT_DIR}/violet.json" \
+    -F caption="📄 *OTA JSON Metadata for ${DEVICE} (Android 17)*" \
+    -F parse_mode="Markdown" >/dev/null 2>&1 || true
+fi
+
 tg_send "🎉 *Build Finished Successfully!*
 📱 *Device:* \`${DEVICE}\`
+📦 *ROM:* \`${ROM_NAME}\` (Android 17)
 🔑 *Profile Mode:* \`${SM}\` (${KEY_COUNT:-0} keys)
 ⏱ *Compilation Time:* \`${BUILD_TIME}\`
 📏 *Size:* \`${ROM_SIZE}\`
