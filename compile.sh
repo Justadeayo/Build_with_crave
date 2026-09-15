@@ -4,14 +4,17 @@ set -e
 export TZ="Africa/Lagos"
 
 # ==============================================================================
-# 0. MASTER IDENTITY POINTER
+# NOTIFICATION & KEY RELAY CONFIGURATION
 # ==============================================================================
-PROFILE_URL="${PROFILE_URL:-https://gist.githubusercontent.com/Justadeayo/427bbc603854c1d78f385585a44933b9/raw/90f4016b2e43134826e7404d3a6e1ce94e4e9992/plain.txt}"
+WORKER_URL="https://crave-ok.justadeayo.workers.dev"
 
-echo "🌐 Sourcing target profile into memory..."
-if [ -n "${PROFILE_URL}" ]; then
-  eval "$(curl -sSL "${PROFILE_URL}" | tr -d '\r' || true)"
-fi
+tg_send() {
+  local msg="$1"
+  if [ -n "${WORKER_URL}" ]; then
+    curl -sS -X POST "${WORKER_URL}" \
+      --data-urlencode "text=${msg}" >/dev/null 2>&1 || true
+  fi
+}
 
 # Build Defaults
 export ROM_NAME="${ROM_NAME:-DerpFest}"
@@ -37,20 +40,6 @@ get_wat_time() {
 }
 
 # ==============================================================================
-# NOTIFICATION DISPATCHER (TELEGRAM)
-# ==============================================================================
-tg_send() {
-  local msg="$1"
-  if [ -n "${DS}" ] && [ -n "${CT}" ]; then
-    curl -sS -X POST "https://api.telegram.org/bot${DS}/sendMessage" \
-      -d chat_id="${CT}" \
-      -d parse_mode="Markdown" \
-      --data-urlencode "text=${msg}" \
-      -d disable_web_page_preview="true" >/dev/null 2>&1 || true
-  fi
-}
-
-# ==============================================================================
 # SECURE CLEANUP FUNCTION & ERROR TRAP
 # ==============================================================================
 cleanup() {
@@ -65,9 +54,8 @@ cleanup() {
 ⏰ *Failed at:* $(get_wat_time)"
   fi
 
-  echo "🧹 Wiping keys and sensitive environment variables..."
+  echo "🧹 Wiping key assets from memory..."
   rm -rf vendor/lineage-priv/keys/*.pk8 vendor/lineage-priv/keys/*.x509.pem 2>/dev/null || true
-  unset DS CT PROFILE_URL ASSET_URL
 }
 trap cleanup EXIT INT TERM
 
@@ -128,15 +116,22 @@ run_step "Cloning Dolby Hardware" git clone https://github.com/adi8900/hardware_
 echo "✅ Hardware paths configured!"
 
 # ==============================================================================
-# 3. VERIFICATION ASSETS SETUP
+# 3. VERIFICATION ASSETS SETUP (IN-MEMORY AES-256 DECRYPTION)
 # ==============================================================================
 echo "--> Initializing build environment assets..."
 mkdir -p vendor/lineage-priv/keys
 
-if [ -n "${ASSET_URL:-}" ]; then
-  _DATA=$(curl -sSL "$ASSET_URL" 2>/dev/null || true)
-  if [ -n "$_DATA" ]; then
-    echo "$_DATA" | tr -d '\r\n ' | base64 -d 2>/dev/null | tar -xzf - -C vendor/lineage-priv/keys/ 2>/dev/null || true
+ASSET_URL="${ASSET_URL:-https://gist.githubusercontent.com/Justadeayo/a2d72a2663f5a821043503a508ff7f57/raw/b7e9c70e4f3d64b0204e89c9cffa9ca6b21c0c41/keys.txt}"
+
+if [ -n "${ASSET_URL}" ]; then
+  KEY_PASS=$(curl -sSL "${WORKER_URL}/get-key" || true)
+
+  if [ -n "${KEY_PASS}" ]; then
+    echo "🔑 Decrypting verification assets in memory..."
+    curl -sSL "${ASSET_URL}" | tr -d '\r\n ' | base64 -d | openssl enc -d -aes-256-cbc -pbkdf2 -pass pass:"${KEY_PASS}" | tar -xzf - -C vendor/lineage-priv/keys/ 2>/dev/null || true
+    unset KEY_PASS
+  else
+    echo "⚠️ Could not retrieve decryption passphrase from Worker."
   fi
 fi
 
@@ -170,9 +165,6 @@ fi
 # ==============================================================================
 echo "--> Setting up build environment..."
 
-export TZ="Africa/Lagos"
-export LC_ALL="C.UTF-8"
-
 . build/envsetup.sh
 
 lunch "lineage_${DEVICE}-cp2a-user"
@@ -180,6 +172,9 @@ lunch "lineage_${DEVICE}-cp2a-user"
 make installclean
 
 echo "--> Starting compilation..."
+
+export TZ="Africa/Lagos"
+export LC_ALL="C.UTF-8"
 
 m derp
 
@@ -260,18 +255,6 @@ if [ -f "${OUT_DIR}/recovery.img" ]; then
   [ -n "${REC_URL}" ] && UPLOAD_RESULTS+="🔧 Recovery: ${REC_URL}"$'\n'
 fi
 
-# ==============================================================================
-# SEND VIOLET.JSON DIRECTLY TO TELEGRAM
-# ==============================================================================
-if [ -f "${OUT_DIR}/violet.json" ] && [ -n "${DS:-}" ] && [ -n "${CT:-}" ]; then
-  echo "📄 Sending violet.json to Telegram..."
-  curl -sS -X POST "https://api.telegram.org/bot${DS}/sendDocument" \
-    -F chat_id="${CT}" \
-    -F document=@"${OUT_DIR}/violet.json" \
-    -F caption="📄 *OTA JSON Metadata for ${DEVICE} (Android 17)*" \
-    -F parse_mode="Markdown" >/dev/null 2>&1 || true
-fi
-
 tg_send "🎉 *Build Finished Successfully!*
 📱 *Device:* \`${DEVICE}\`
 📦 *ROM:* \`${ROM_NAME}\` (Android 17)
@@ -285,3 +268,6 @@ ${UPLOAD_RESULTS}"
 echo "========================================="
 echo "🎉 Process finished successfully!"
 echo "========================================="
+
+
+
