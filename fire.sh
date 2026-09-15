@@ -102,6 +102,7 @@ rm -rf vendor/MiuiCamera \
        hardware/xiaomi \
        hardware/dolby \
        vendor/lineage-priv/keys \
+       prebuilts/ \
        .repo/local_manifests 2>/dev/null || true
 
 run_step "Initializing Repository" repo init -u "${REPO_MANIFEST_URL}" -b "${REPO_MANIFEST_BRANCH}" --git-lfs --depth=1
@@ -118,6 +119,19 @@ fi
 # ==============================================================================
 # 2. HARDWARE TREES
 # ==============================================================================
+echo "--> Checking frameworks/base SQLiteTokenizer patch..."
+if [ -d frameworks/base ]; then
+  if grep -q "OPTION_CHECK_BRACKETS" frameworks/base/core/java/android/database/sqlite/SQLiteTokenizer.java 2>/dev/null; then
+    echo "✅ SQLiteTokenizer already patched, skipping."
+  else
+    echo "🔧 Applying upstream SQLiteTokenizer patch to frameworks/base..."
+    curl -sSL "https://github.com/xc112lg/android_frameworks_base/commit/025f44b3413aa9dd859b4dab03241dabf573036f.patch" | git -C frameworks/base am || {
+      echo "⚠️ git am failed, attempting git apply fallback..."
+      curl -sSL "https://github.com/xc112lg/android_frameworks_base/commit/025f44b3413aa9dd859b4dab03241dabf573036f.patch" | git -C frameworks/base apply || true
+    }
+    echo "✅ SQLiteTokenizer patch operation complete."
+  fi
+fi
 
 echo "--> Fetching custom hardware repos..."
 rm -rf hardware/xiaomi
