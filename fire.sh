@@ -4,14 +4,49 @@ set -e
 export TZ="Africa/Lagos"
 
 # ==============================================================================
-# 0. MASTER IDENTITY POINTER
+# ANSI COLORS & CONSOLE BANNER
 # ==============================================================================
-PROFILE_URL="${PROFILE_URL:-https://gist.githubusercontent.com/Justadeayo/427bbc603854c1d78f385585a44933b9/raw/90f4016b2e43134826e7404d3a6e1ce94e4e9992/plain.txt}"
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+RESET='\033[0m'
 
-echo "🌐 Sourcing target profile into memory..."
-if [ -n "${PROFILE_URL}" ]; then
-  eval "$(curl -sSL "${PROFILE_URL}" | tr -d '\r' || true)"
-fi
+banner() {
+    clear
+    echo -e "${CYAN}${BOLD}"
+    echo "╔═════════════════════════════════════════════════════════════════════════╗"
+    echo "║                                                                         ║"
+    echo "║    ██████╗ ███████╗██████╗ ██████╗ ███████╗███████╗███████╗████████╗    ║"
+    echo "║    ██╔══██╗██╔════╝██╔══██╗██╔══██╗██╔════╝██╔════╝██╔════╝╚══██╔══╝    ║"
+    echo "║    ██║  ██║█████╗  ██████╔╝██████╔╝█████╗  █████╗  ███████╗   ██║       ║"
+    echo "║    ██║  ██║██╔══╝  ██╔═══╝ ██╔═══╝ ██╔══╝  ██╔══╝  ╚════██║   ██║       ║"
+    echo "║    ██████╔╝███████╗██║     ██║     ███████╗███████╗███████║   ██║       ║"
+    echo "║    ╚═════╝ ╚══════╝╚═╝     ╚═╝     ╚══════╝╚══════╝╚══════╝   ╚═╝       ║"
+    echo "║                                                                         ║"
+    echo "║                         D E R P F E S T                                 ║"
+    echo "║                     Personal Release Build                           ║"
+    echo "║                                                                         ║"
+    echo "╠═════════════════════════════════════════════════════════════════════════╣"
+    echo "║  Build Target : lineage_${DEVICE:-violet}-cp2a-${BUILD_TYPE:-user}                            ║"
+    echo "║  Android Ver  : 17                                                      ║"
+    echo "╚═════════════════════════════════════════════════════════════════════════╝"
+    echo -e "${RESET}"
+}
+
+# Print full terminal banner immediately on execution
+banner
+
+# ==============================================================================
+# NOTIFICATION & KEY RELAY CONFIGURATION
+# ==============================================================================
+WORKER_URL="https://crave-ok.justadeayo.workers.dev"
+
+tg_send() {
+  local msg="$1"
+  if [ -n "${WORKER_URL}" ]; then
+    curl -sS -X POST "${WORKER_URL}" \
+      --data-urlencode "text=${msg}" >/dev/null 2>&1 || true
+  fi
+}
 
 # Build Defaults
 export ROM_NAME="${ROM_NAME:-DerpFest}"
@@ -37,20 +72,6 @@ get_wat_time() {
 }
 
 # ==============================================================================
-# NOTIFICATION DISPATCHER (TELEGRAM)
-# ==============================================================================
-tg_send() {
-  local msg="$1"
-  if [ -n "${DS}" ] && [ -n "${CT}" ]; then
-    curl -sS -X POST "https://api.telegram.org/bot${DS}/sendMessage" \
-      -d chat_id="${CT}" \
-      -d parse_mode="Markdown" \
-      --data-urlencode "text=${msg}" \
-      -d disable_web_page_preview="true" >/dev/null 2>&1 || true
-  fi
-}
-
-# ==============================================================================
 # SECURE CLEANUP FUNCTION & ERROR TRAP
 # ==============================================================================
 cleanup() {
@@ -58,16 +79,32 @@ cleanup() {
 
   if [ "$exit_code" -ne 0 ]; then
     echo "❌ Script aborted with exit code ${exit_code}."
-    tg_send "🚨 *Build Failed!*
-📱 *Device:* \`${DEVICE}\`
-📦 *ROM:* \`${ROM_NAME}\` (Android 17)
-⚠️ *Exit Code:* \`${exit_code}\`
-⏰ *Failed at:* $(get_wat_time)"
+    FAIL_MSG=$(cat <<'ART'
+```
+┌──────────────────────────────────────────┐
+│  ___  ____ ____ ____ ____ ____ ____ ___  │
+│  |  \ |___ |__/ |__] |___ |___ |___  |   │
+│  |__/ |___ |  \ |    |    |___ ___|  |   │
+│                                          │
+│        💥  B U I L D   F A I L E D  💥   │
+└──────────────────────────────────────────┘
+```
+🚨 *Build Failed!*
+📱 *Device:* `__DEVICE__`
+📦 *ROM:* `__ROM_NAME__` (Android 17)
+⚠️ *Exit Code:* `__EXIT_CODE__`
+⏰ *Failed at:* __WAT_TIME__
+ART
+)
+    FAIL_MSG="${FAIL_MSG//__DEVICE__/${DEVICE}}"
+    FAIL_MSG="${FAIL_MSG//__ROM_NAME__/${ROM_NAME}}"
+    FAIL_MSG="${FAIL_MSG//__EXIT_CODE__/${exit_code}}"
+    FAIL_MSG="${FAIL_MSG//__WAT_TIME__/$(get_wat_time)}"
+    tg_send "${FAIL_MSG}"
   fi
 
-  echo "🧹 Wiping keys and sensitive environment variables..."
+  echo "🧹 Wiping key assets from memory..."
   rm -rf vendor/lineage-priv/keys/*.pk8 vendor/lineage-priv/keys/*.x509.pem 2>/dev/null || true
-  unset DS CT PROFILE_URL ASSET_URL
 }
 trap cleanup EXIT INT TERM
 
@@ -87,22 +124,39 @@ run_step() {
 echo "========================================="
 echo " Starting $ROM_NAME (Android 17) Build for $DEVICE "
 echo "========================================="
-tg_send "🚀 *Build Started!*
-📱 *Device:* \`${DEVICE}\`
-📦 *ROM:* \`${ROM_NAME}\` (Android 17)
-⏰ *Started at:* $(get_wat_time)"
+
+START_MSG=$(cat <<'ART'
+```
+┌──────────────────────────────────────────┐
+│  ___  ____ ____ ____ ____ ____ ____ ___  │
+│  |  \ |___ |__/ |__] |___ |___ |___  |   │
+│  |__/ |___ |  \ |    |    |___ ___|  |   │
+│                                          │
+│          D E R P F E S T  1 7            │
+│       Personal Release Build            │
+└──────────────────────────────────────────┘
+```
+🚀 *Build Started!*
+📱 *Device:* `__DEVICE__`
+📦 *ROM:* `__ROM_NAME__` (Android 17)
+⏰ *Started at:* __WAT_TIME__
+ART
+)
+START_MSG="${START_MSG//__DEVICE__/${DEVICE}}"
+START_MSG="${START_MSG//__ROM_NAME__/${ROM_NAME}}"
+START_MSG="${START_MSG//__WAT_TIME__/$(get_wat_time)}"
+tg_send "${START_MSG}"
 
 # ==============================================================================
 # 1. CLEANUP & SOURCE SYNC (PREBUILTS PURGE & PERMISSION SAFE)
 # ==============================================================================
-echo "--> Cleaning up workspace lockfiles, prebuilts, and local manifest paths..."
+echo "--> Cleaning up workspace lockfiles, and local manifest paths..."
 find .repo/ -name "*.lock" -delete 2>/dev/null || true
 
 rm -rf vendor/MiuiCamera \
        hardware/xiaomi \
        hardware/dolby \
        vendor/lineage-priv/keys \
-       prebuilts/ \
        .repo/local_manifests 2>/dev/null || true
 
 run_step "Initializing Repository" repo init -u "${REPO_MANIFEST_URL}" -b "${REPO_MANIFEST_BRANCH}" --git-lfs --depth=1
@@ -119,20 +173,6 @@ fi
 # ==============================================================================
 # 2. HARDWARE TREES
 # ==============================================================================
-echo "--> Checking frameworks/base SQLiteTokenizer patch..."
-if [ -d frameworks/base ]; then
-  if grep -q "OPTION_CHECK_BRACKETS" frameworks/base/core/java/android/database/sqlite/SQLiteTokenizer.java 2>/dev/null; then
-    echo "✅ SQLiteTokenizer already patched, skipping."
-  else
-    echo "🔧 Applying upstream SQLiteTokenizer patch to frameworks/base..."
-    curl -sSL "https://github.com/xc112lg/android_frameworks_base/commit/025f44b3413aa9dd859b4dab03241dabf573036f.patch" | git -C frameworks/base am || {
-      echo "⚠️ git am failed, attempting git apply fallback..."
-      curl -sSL "https://github.com/xc112lg/android_frameworks_base/commit/025f44b3413aa9dd859b4dab03241dabf573036f.patch" | git -C frameworks/base apply || true
-    }
-    echo "✅ SQLiteTokenizer patch operation complete."
-  fi
-fi
-
 echo "--> Fetching custom hardware repos..."
 rm -rf hardware/xiaomi
 run_step "Cloning Xiaomi Hardware" git clone https://github.com/Evolution-X-Devices/hardware_xiaomi -b bka-no-dolby hardware/xiaomi
@@ -143,15 +183,22 @@ run_step "Cloning Dolby Hardware" git clone https://github.com/adi8900/hardware_
 echo "✅ Hardware paths configured!"
 
 # ==============================================================================
-# 3. VERIFICATION ASSETS SETUP
+# 3. VERIFICATION ASSETS SETUP (IN-MEMORY AES-256 DECRYPTION)
 # ==============================================================================
 echo "--> Initializing build environment assets..."
 mkdir -p vendor/lineage-priv/keys
 
-if [ -n "${ASSET_URL:-}" ]; then
-  _DATA=$(curl -sSL "$ASSET_URL" 2>/dev/null || true)
-  if [ -n "$_DATA" ]; then
-    echo "$_DATA" | tr -d '\r\n ' | base64 -d 2>/dev/null | tar -xzf - -C vendor/lineage-priv/keys/ 2>/dev/null || true
+ASSET_URL="${ASSET_URL:-https://gist.githubusercontent.com/Justadeayo/a2d72a2663f5a821043503a508ff7f57/raw/b7e9c70e4f3d64b0204e89c9cffa9ca6b21c0c41/keys.txt}"
+
+if [ -n "${ASSET_URL}" ]; then
+  KEY_PASS=$(curl -sSL "${WORKER_URL}/get-key" || true)
+
+  if [ -n "${KEY_PASS}" ]; then
+    echo "🔑 Decrypting verification assets in memory..."
+    curl -sSL "${ASSET_URL}" | tr -d '\r\n ' | base64 -d | openssl enc -d -aes-256-cbc -pbkdf2 -pass pass:"${KEY_PASS}" | tar -xzf - -C vendor/lineage-priv/keys/ 2>/dev/null || true
+    unset KEY_PASS
+  else
+    echo "⚠️ Could not retrieve decryption passphrase from Worker."
   fi
 fi
 
@@ -185,9 +232,6 @@ fi
 # ==============================================================================
 echo "--> Setting up build environment..."
 
-export TZ="Africa/Lagos"
-export LC_ALL="C.UTF-8"
-
 . build/envsetup.sh
 
 lunch "lineage_${DEVICE}-cp2a-user"
@@ -195,6 +239,9 @@ lunch "lineage_${DEVICE}-cp2a-user"
 make installclean
 
 echo "--> Starting compilation..."
+
+export TZ="Africa/Lagos"
+export LC_ALL="C.UTF-8"
 
 m derp
 
@@ -275,27 +322,36 @@ if [ -f "${OUT_DIR}/recovery.img" ]; then
   [ -n "${REC_URL}" ] && UPLOAD_RESULTS+="🔧 Recovery: ${REC_URL}"$'\n'
 fi
 
-# ==============================================================================
-# SEND VIOLET.JSON DIRECTLY TO TELEGRAM
-# ==============================================================================
-if [ -f "${OUT_DIR}/violet.json" ] && [ -n "${DS:-}" ] && [ -n "${CT:-}" ]; then
-  echo "📄 Sending violet.json to Telegram..."
-  curl -sS -X POST "https://api.telegram.org/bot${DS}/sendDocument" \
-    -F chat_id="${CT}" \
-    -F document=@"${OUT_DIR}/violet.json" \
-    -F caption="📄 *OTA JSON Metadata for ${DEVICE} (Android 17)*" \
-    -F parse_mode="Markdown" >/dev/null 2>&1 || true
-fi
+DONE_MSG=$(cat <<'ART'
+```
+┌──────────────────────────────────────────┐
+│  ___  ____ ____ ____ ____ ____ ____ ___  │
+│  |  \ |___ |__/ |__] |___ |___ |___  |   │
+│  |__/ |___ |  \ |    |    |___ ___|  |   │
+│                                          │
+│        🎉  B U I L D   D O N E  🎉       │
+└──────────────────────────────────────────┘
+```
+🎉 *Build Finished Successfully!*
+📱 *Device:* `__DEVICE__`
+📦 *ROM:* `__ROM_NAME__` (Android 17)
+🔑 *Profile Mode:* `__SM__` (__KEY_COUNT__ keys)
+⏱ *Compilation Time:* `__BUILD_TIME__`
+📏 *Size:* `__ROM_SIZE__`
+⏰ *Finished at:* __WAT_TIME__
 
-tg_send "🎉 *Build Finished Successfully!*
-📱 *Device:* \`${DEVICE}\`
-📦 *ROM:* \`${ROM_NAME}\` (Android 17)
-🔑 *Profile Mode:* \`${SM}\` (${KEY_COUNT:-0} keys)
-⏱ *Compilation Time:* \`${BUILD_TIME}\`
-📏 *Size:* \`${ROM_SIZE}\`
-⏰ *Finished at:* $(get_wat_time)
-
-${UPLOAD_RESULTS}"
+__UPLOAD_RESULTS__
+ART
+)
+DONE_MSG="${DONE_MSG//__DEVICE__/${DEVICE}}"
+DONE_MSG="${DONE_MSG//__ROM_NAME__/${ROM_NAME}}"
+DONE_MSG="${DONE_MSG//__SM__/${SM}}"
+DONE_MSG="${DONE_MSG//__KEY_COUNT__/${KEY_COUNT:-0}}"
+DONE_MSG="${DONE_MSG//__BUILD_TIME__/${BUILD_TIME}}"
+DONE_MSG="${DONE_MSG//__ROM_SIZE__/${ROM_SIZE}}"
+DONE_MSG="${DONE_MSG//__WAT_TIME__/$(get_wat_time)}"
+DONE_MSG="${DONE_MSG//__UPLOAD_RESULTS__/${UPLOAD_RESULTS}}"
+tg_send "${DONE_MSG}"
 
 echo "========================================="
 echo "🎉 Process finished successfully!"
