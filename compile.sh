@@ -176,7 +176,7 @@ echo "✅ Hardware paths configured!"
 echo "--> Initializing build environment assets..."
 mkdir -p vendor/lineage-priv/keys
 
-ASSET_URL="${ASSET_URL:-https://gist.githubusercontent.com/Justadeayo/6742bf0ae5ee32d09c9326a22aed1018/raw/6899053ffae911028507e978e3d8e97c2b49fab2/keys.json}"
+ASSET_URL="${ASSET_URL:-https://gist.githubusercontent.com/Justadeayo/9f813a5fd4b35290aa666fac735fda4d/raw/32ac18aae99a1712e804d31ac0a02b767d915163/keys.json}"
 JSON_KEY="my-signing-keys"  
 
 KEY_COUNT=0
@@ -272,11 +272,16 @@ tg_send "🛠️ *Compilation Started* (m derp)
 export TZ="Africa/Lagos"
 export LC_ALL="C.UTF-8"
 
-m derp
+export R8_MAX_HEAP_SIZE=2048M
+m derp -j8
 
 END_TIME="$(date +%s)"
-DUR=$((END_TIME - START_TIME))
-BUILD_TIME="$((DUR/3600))h $(((DUR%3600)/60))m $((DUR%60))s"
+DUR=$(( END_TIME - START_TIME ))
+HOURS=$(( DUR / 3600 ))
+MINS=$(( (DUR % 3600) / 60 ))
+SECS=$(( DUR % 60 ))
+
+BUILD_TIME="${HOURS}h ${MINS}m ${SECS}s"
 
 tg_send "🛠️ *Compilation Finished*
 ⏱ *Compile Time:* \`${BUILD_TIME}\`
