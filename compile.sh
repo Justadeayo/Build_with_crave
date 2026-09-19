@@ -133,6 +133,9 @@ tg_send "🚀 *Build Started!*
 # ==============================================================================
 # 1. CLEANUP & SOURCE SYNC
 # ==============================================================================
+echo "--> Wiping local git changes across all repos..."
+repo forall -c 'git diff-index --quiet HEAD -- || (git reset --hard HEAD && git clean -fdx)' 2>/dev/null || true
+
 echo "--> Cleaning up workspace lockfiles, and local manifest paths..."
 find .repo/ -name "*.lock" -delete 2>/dev/null || true
 
