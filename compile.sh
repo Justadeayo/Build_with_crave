@@ -170,6 +170,14 @@ rm -rf hardware/dolby
 run_step "Cloning Dolby Hardware" git clone https://github.com/adi8900/hardware_dolby -b lunaris hardware/dolby
 echo "✅ Hardware paths configured!"
 
+echo "--> Ensuring kernel-specific clang (r416183b) is available..."
+KERNEL_CLANG_DIR="prebuilts/clang/host/linux-x86/clang-r416183b"
+if [ ! -x "${KERNEL_CLANG_DIR}/bin/clang" ]; then
+  echo "--> clang-r416183b not found, fetching for kernel build..."
+  git clone --depth=1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git "${KERNEL_CLANG_DIR}"
+fi
+file "${KERNEL_CLANG_DIR}/bin/clang"  
+
 # ==============================================================================
 # 3. VERIFICATION ASSETS SETUP (IN-MEMORY AES-256 DECRYPTION)
 # ==============================================================================
