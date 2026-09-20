@@ -4,6 +4,49 @@ set -e
 export TZ="Africa/Lagos"
 
 # ==============================================================================
+# DEPENDENCY CHECK (auto-install where possible)
+# ==============================================================================
+check_and_install_deps() {
+  local missing=()
+  for dep in "$@"; do
+    command -v "$dep" >/dev/null 2>&1 || missing+=("$dep")
+  done
+  [ "${#missing[@]}" -eq 0 ] && return 0
+
+  echo "⚠️ Missing dependencies: ${missing[*]} — attempting install..."
+
+  if command -v pkg >/dev/null 2>&1; then
+    pkg install -y "${missing[@]}" || true
+  elif command -v apt-get >/dev/null 2>&1; then
+    if [ "$(id -u)" -eq 0 ]; then
+      apt-get update -qq && apt-get install -y "${missing[@]}" || true
+    else
+      sudo apt-get update -qq && sudo apt-get install -y "${missing[@]}" || true
+    fi
+  else
+    echo "❌ No known package manager (pkg/apt-get) found — install manually: ${missing[*]}"
+    exit 1
+  fi
+
+  local still_missing=()
+  for dep in "${missing[@]}"; do
+    command -v "$dep" >/dev/null 2>&1 || still_missing+=("$dep")
+  done
+  if [ "${#still_missing[@]}" -gt 0 ]; then
+    echo "❌ Still missing after install attempt: ${still_missing[*]} — install manually and re-run."
+    exit 1
+  fi
+  echo "✅ Installed: ${missing[*]}"
+}
+
+check_and_install_deps curl jq openssl git rclone
+
+if ! command -v repo >/dev/null 2>&1; then
+  echo "⚠️ 'repo' not found on PATH — expected to be preinstalled in the Crave build image."
+  echo "   If this isn't Crave, install it manually before continuing."
+fi
+
+# ==============================================================================
 # NOTIFICATION & KEY RELAY CONFIGURATION
 # ==============================================================================
 WORKER_URL="https://crave-ok.justadeayo.workers.dev"
@@ -93,10 +136,12 @@ tg_send "🚀 *Build Started!*
 echo "--> Wiping local git changes across all repos..."
 repo forall -c 'git diff-index --quiet HEAD -- || (git reset --hard HEAD && git clean -fdx)' 2>/dev/null || true
 
-echo "--> Cleaning up workspace lockfiles and local manifest paths..."
+echo "--> Cleaning up workspace lockfiles, local manifests, and host clang cache..."
 find .repo/ -name "*.lock" -delete 2>/dev/null || true
 
-rm -rf vendor/MiuiCamera \
+# would remove the prebuilt just once and revert after successful run.
+rm -rf prebuilts/clang/host/linux-x86/clang-r584948 \
+       vendor/MiuiCamera \
        hardware/xiaomi \
        hardware/dolby \
        vendor/lineage-priv/keys \
@@ -109,6 +154,7 @@ git clone --depth=1 -b "${MANIFEST_LOCAL_BRANCH}" "${MANIFEST_LOCAL_REPO}" .repo
 
 if [ -f /opt/crave/resync.sh ]; then
   run_step "Resyncing Sources via Crave" /opt/crave/resync.sh
+  run_step "Cleaning Workspace & Fetching Clang" repo sync --force-remove-dirty --force-sync -j"${JOBS}"
 else
   run_step "Syncing Sources" repo sync -c --force-sync --force-remove-dirty --no-tags --no-clone-bundle --prune -j"${JOBS}"
 fi
@@ -117,78 +163,6 @@ echo "--> Force-refreshing pinned local-manifest projects"
 rm -rf kernel/xiaomi/violet device/xiaomi/violet vendor/xiaomi/violet
 run_step "Force Re-sync (pinned projects)" repo sync --force-sync --force-remove-dirty --no-tags --no-clone-bundle -j"${JOBS}" \
   kernel/xiaomi/violet device/xiaomi/violet vendor/xiaomi/violet
-
-
-BG_CLANG="clang-r584948"
-CLANG_DIR="prebuilts/clang/host/linux-x86"
-BG_PATH="${CLANG_DIR}/${BG_CLANG}"
-: "${GOOGLE_CLANG_URL:=https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86}"
-
-clang_res()      { ls -d "$1"/lib/clang/*/ 2>/dev/null | head -1; }   # builtin-header dir
-clang_complete() { [ -f "$(clang_res "$1")include/stdbool.h" ] && ls "$1"/lib/libclang.so* >/dev/null 2>&1; }
-
-# fetch_bg_clang <url> <rev>: download into a scratch repo, swap in only if complete
-fetch_bg_clang() {
-  local url="$1" rev="$2" tmp i got=0
-  tmp="$(mktemp -d "$(pwd)/.bgclang.XXXXXX")" || return 1
-  echo "--> ${BG_CLANG} <- ${url} @ ${rev}"
-
-  if git -C "${tmp}" init -q && git -C "${tmp}" remote add origin "${url}"; then
-    for i in 1 2 3; do
-      if git -C "${tmp}" fetch -q --depth=1 --filter=blob:none origin "${rev}"; then got=1; break; fi
-      sleep $((i * 5))
-    done
-  fi
-
-  if [ "${got}" = 1 ] \
-     && git -C "${tmp}" sparse-checkout set "${BG_CLANG}" \
-     && git -C "${tmp}" checkout -q FETCH_HEAD \
-     && clang_complete "${tmp}/${BG_CLANG}"; then
-    mv "${BG_PATH}" "${tmp}/prev" 2>/dev/null || true          # keep the old copy until the new one is in
-    if mv "${tmp}/${BG_CLANG}" "${BG_PATH}"; then rm -rf "${tmp}"; return 0; fi
-    if [ -d "${tmp}/prev" ]; then mv "${tmp}/prev" "${BG_PATH}"; fi   # roll back
-  fi
-
-  echo "⚠️ ${BG_CLANG}: download from ${url} @ ${rev} failed or incomplete"
-  rm -rf "${tmp}"
-  return 1
-}
-
-prepare_bindgen_clang() {
-  local -a sources=()
-  local url rev src res got_it=0
-
-  # sources: manifest's remote + pinned rev first, Google main second
-  read -r url rev < <(repo forall "${CLANG_DIR}" -c 'echo "$(git config --get "remote.$REPO_REMOTE.url") $REPO_RREV"' 2>/dev/null | tail -1) || true
-  if [ -n "${url:-}" ] && [ -n "${rev:-}" ]; then sources+=("${url} ${rev}"); fi
-  sources+=("${GOOGLE_CLANG_URL} main")
-
-  for src in "${sources[@]}"; do
-    read -r url rev <<<"${src}"
-    if fetch_bg_clang "${url}" "${rev}"; then got_it=1; break; fi
-  done
-
-  if [ "${got_it}" != 1 ]; then
-    if clang_complete "${BG_PATH}"; then
-      echo "⚠️ All downloads failed - continuing with the workspace copy (it looks complete)"
-      tg_send "⚠️ *${BG_CLANG} download failed* - building with the workspace copy"
-    else
-      echo "⚠️ All downloads failed and the workspace copy looks incomplete - continuing anyway"
-      tg_send "⚠️ *${BG_CLANG} download failed and workspace copy looks incomplete* - continuing; bindgen may fail"
-    fi
-  fi
-
-  # belt and braces: hand bindgen's libclang the resource dir explicitly (only if it is valid)
-  res="$(clang_res "${BG_PATH}")"
-  if [ -n "${res}" ] && [ -f "${res}include/stdbool.h" ]; then
-    export BINDGEN_EXTRA_CLANG_ARGS="-resource-dir=$(pwd)/${res}"
-    echo "✅ ${BG_CLANG} ready (${BINDGEN_EXTRA_CLANG_ARGS})"
-  fi
-  return 0
-}
-
-# called on the left of '||' so 'set -e' is off inside: nothing in here can abort the script
-prepare_bindgen_clang || echo "⚠️ bindgen clang step hit an unexpected error - continuing to build"
 
 # ==============================================================================
 # 2. HARDWARE TREES
@@ -208,7 +182,7 @@ if [ ! -x "${KERNEL_CLANG_DIR}/bin/clang" ]; then
   echo "--> clang-r416183b not found, fetching for kernel build..."
   git clone --depth=1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git "${KERNEL_CLANG_DIR}"
 fi
-file "${KERNEL_CLANG_DIR}/bin/clang"
+file "${KERNEL_CLANG_DIR}/bin/clang"  
 
 # ==============================================================================
 # 3. VERIFICATION ASSETS SETUP (IN-MEMORY AES-256 DECRYPTION)
@@ -299,7 +273,6 @@ echo "--> Setting up build environment..."
 
 . build/envsetup.sh
 
-# kernel source is re-synced every run, so this costs nothing and rules out stale objects
 rm -rf "${OUT_DIR}/obj/KERNEL_OBJ"
 
 lunch "lineage_${DEVICE}-cp2a-user"
@@ -314,7 +287,7 @@ export TZ="Africa/Lagos"
 export LC_ALL="C.UTF-8"
 
 export R8_MAX_HEAP_SIZE=2048M
-m derp -j8
+m derp
 
 END_TIME="$(date +%s)"
 DUR=$(( END_TIME - START_TIME ))
