@@ -4,6 +4,49 @@ set -e
 export TZ="Africa/Lagos"
 
 # ==============================================================================
+# DEPENDENCY CHECK (auto-install where possible)
+# ==============================================================================
+check_and_install_deps() {
+  local missing=()
+  for dep in "$@"; do
+    command -v "$dep" >/dev/null 2>&1 || missing+=("$dep")
+  done
+  [ "${#missing[@]}" -eq 0 ] && return 0
+
+  echo "⚠️ Missing dependencies: ${missing[*]} — attempting install..."
+
+  if command -v pkg >/dev/null 2>&1; then
+    pkg install -y "${missing[@]}" || true
+  elif command -v apt-get >/dev/null 2>&1; then
+    if [ "$(id -u)" -eq 0 ]; then
+      apt-get update -qq && apt-get install -y "${missing[@]}" || true
+    else
+      sudo apt-get update -qq && sudo apt-get install -y "${missing[@]}" || true
+    fi
+  else
+    echo "❌ No known package manager (pkg/apt-get) found — install manually: ${missing[*]}"
+    exit 1
+  fi
+
+  local still_missing=()
+  for dep in "${missing[@]}"; do
+    command -v "$dep" >/dev/null 2>&1 || still_missing+=("$dep")
+  done
+  if [ "${#still_missing[@]}" -gt 0 ]; then
+    echo "❌ Still missing after install attempt: ${still_missing[*]} — install manually and re-run."
+    exit 1
+  fi
+  echo "✅ Installed: ${missing[*]}"
+}
+
+check_and_install_deps curl jq openssl git rclone
+
+if ! command -v repo >/dev/null 2>&1; then
+  echo "⚠️ 'repo' not found on PATH — expected to be preinstalled in the Crave build image."
+  echo "   If this isn't Crave, install it manually before continuing."
+fi
+
+# ==============================================================================
 # NOTIFICATION & KEY RELAY CONFIGURATION
 # ==============================================================================
 WORKER_URL="https://crave-ok.justadeayo.workers.dev"
@@ -93,11 +136,10 @@ tg_send "🚀 *Build Started!*
 echo "--> Wiping local git changes across all repos..."
 repo forall -c 'git diff-index --quiet HEAD -- || (git reset --hard HEAD && git clean -fdx)' 2>/dev/null || true
 
-echo "--> Cleaning up workspace lockfiles, local manifests, and prebuilt clang cache..."
+echo "--> Cleaning up workspace lockfiles, and local manifest paths..."
 find .repo/ -name "*.lock" -delete 2>/dev/null || true
 
-rm -rf prebuilts/clang/host/linux-x86/clang-r584948 \
-       vendor/MiuiCamera \
+rm -rf vendor/MiuiCamera \
        hardware/xiaomi \
        hardware/dolby \
        vendor/lineage-priv/keys \
@@ -110,14 +152,13 @@ git clone --depth=1 -b "${MANIFEST_LOCAL_BRANCH}" "${MANIFEST_LOCAL_REPO}" .repo
 
 if [ -f /opt/crave/resync.sh ]; then
   run_step "Resyncing Sources via Crave" /opt/crave/resync.sh
-  run_step "Cleaning Dirty State" repo sync --force-remove-dirty --force-sync -j"${JOBS}"
 else
-  run_step "Syncing Sources" repo sync -c --force-sync --force-remove-dirty --no-tags --no-clone-bundle --prune -j"${JOBS}"
+  run_step "Syncing Sources" repo sync -c --force-sync --no-tags --no-clone-bundle --prune -j"${JOBS}"
 fi
 
 echo "--> Force-refreshing pinned local-manifest projects"
 rm -rf kernel/xiaomi/violet device/xiaomi/violet vendor/xiaomi/violet
-run_step "Force Re-sync (pinned projects)" repo sync --force-sync --force-remove-dirty --no-tags --no-clone-bundle -j"${JOBS}" \
+run_step "Force Re-sync (pinned projects)" repo sync --force-sync --no-tags --no-clone-bundle -j"${JOBS}" \
   kernel/xiaomi/violet device/xiaomi/violet vendor/xiaomi/violet
 
 # ==============================================================================
@@ -138,7 +179,7 @@ if [ ! -x "${KERNEL_CLANG_DIR}/bin/clang" ]; then
   echo "--> clang-r416183b not found, fetching for kernel build..."
   git clone --depth=1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git "${KERNEL_CLANG_DIR}"
 fi
-file "${KERNEL_CLANG_DIR}/bin/clang"
+file "${KERNEL_CLANG_DIR}/bin/clang"  
 
 # ==============================================================================
 # 3. VERIFICATION ASSETS SETUP (IN-MEMORY AES-256 DECRYPTION)
