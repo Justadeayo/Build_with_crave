@@ -136,12 +136,10 @@ tg_send "🚀 *Build Started!*
 echo "--> Wiping local git changes across all repos..."
 repo forall -c 'git diff-index --quiet HEAD -- || (git reset --hard HEAD && git clean -fdx)' 2>/dev/null || true
 
-echo "--> Cleaning up workspace lockfiles, local manifests, and host clang cache..."
+echo "--> Cleaning up workspace lockfiles and local manifest paths..."
 find .repo/ -name "*.lock" -delete 2>/dev/null || true
 
-# would remove the prebuilt just once and revert after successful run.
-rm -rf prebuilts/clang/host/linux-x86/clang-r584948 \
-       vendor/MiuiCamera \
+rm -rf vendor/MiuiCamera \
        hardware/xiaomi \
        hardware/dolby \
        vendor/lineage-priv/keys \
@@ -163,6 +161,66 @@ echo "--> Force-refreshing pinned local-manifest projects"
 rm -rf kernel/xiaomi/violet device/xiaomi/violet vendor/xiaomi/violet
 run_step "Force Re-sync (pinned projects)" repo sync --force-sync --force-remove-dirty --no-tags --no-clone-bundle -j"${JOBS}" \
   kernel/xiaomi/violet device/xiaomi/violet vendor/xiaomi/violet
+
+# ==============================================================================
+# 1b. HOST CLANG GUARD (fixes "Unable to find libclang" in libbinder_ndk_bindgen)
+# ==============================================================================
+# Soong hard-codes LIBCLANG_PATH=<clang>/lib/ on the bindgen command line, so
+# exporting our own value can never help. The files themselves must be complete.
+# So: check them, and only if they are broken, repair (cheapest fix first).
+HOST_CLANG_PRJ="prebuilts/clang/host/linux-x86"
+HOST_CLANG_NAME="clang-r584948"
+HOST_CLANG_DIR="${HOST_CLANG_PRJ}/${HOST_CLANG_NAME}"
+
+host_clang_ok() {
+  # clang binary runs
+  "${HOST_CLANG_DIR}/bin/clang" --version >/dev/null 2>&1 || return 1
+  # real libclang.so* (>1MB rules out empty files, LFS pointers, broken symlinks)
+  find -L "${HOST_CLANG_DIR}/lib" -maxdepth 1 -name 'libclang.so*' -size +1M 2>/dev/null | grep -q . || return 1
+  # builtin headers, which bindgen also needs
+  ls "${HOST_CLANG_DIR}"/lib/clang/*/include/stdbool.h >/dev/null 2>&1 || return 1
+  return 0
+}
+
+repair_host_clang() {
+  local name
+
+  echo "--> Repair 1/3: restoring ${HOST_CLANG_NAME} from git objects already in the workspace..."
+  git -C "${HOST_CLANG_PRJ}" checkout HEAD -- "${HOST_CLANG_NAME}" 2>&1 | tail -3 || true
+  host_clang_ok && return 0
+
+  echo "--> Repair 2/3: wiping the clang project + repo's copy of it, then re-cloning..."
+  name="$(repo list -n "${HOST_CLANG_PRJ}" 2>/dev/null | head -1)"
+  rm -rf "${HOST_CLANG_PRJ}" ".repo/projects/${HOST_CLANG_PRJ}.git"
+  if [ -n "${name}" ]; then rm -rf ".repo/project-objects/${name}.git"; fi
+  repo sync -c --force-sync --no-tags --no-clone-bundle -j4 "${HOST_CLANG_PRJ}" || true
+  host_clang_ok && return 0
+
+  echo "--> Repair 3/3: downloading ${HOST_CLANG_NAME} straight from Google..."
+  rm -rf "${HOST_CLANG_DIR}"
+  mkdir -p "${HOST_CLANG_DIR}"
+  curl -fsSL --retry 3 -o host-clang.tgz \
+    "https://android.googlesource.com/platform/${HOST_CLANG_PRJ}/+archive/refs/heads/main/${HOST_CLANG_NAME}.tar.gz" \
+    && tar -xzf host-clang.tgz -C "${HOST_CLANG_DIR}" || true
+  rm -f host-clang.tgz
+  host_clang_ok && return 0
+
+  return 1
+}
+
+if host_clang_ok; then
+  echo "✅ Host ${HOST_CLANG_NAME} is complete."
+else
+  echo "⚠️ Host ${HOST_CLANG_NAME} is incomplete - repairing before the build..."
+  tg_send "⚠️ *Host ${HOST_CLANG_NAME} incomplete* - repairing before build"
+  if ! repair_host_clang; then
+    echo "❌ Could not repair ${HOST_CLANG_NAME}; bindgen would fail, get ready."
+    tg_send "❌ Could not repair ${HOST_CLANG_NAME}; bindgen would fail, get ready."
+    exit 1
+  fi
+  echo "✅ Host ${HOST_CLANG_NAME} repaired."
+  tg_send "✅ Host ${HOST_CLANG_NAME} repaired."
+fi
 
 # ==============================================================================
 # 2. HARDWARE TREES
