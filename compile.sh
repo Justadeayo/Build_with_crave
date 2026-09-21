@@ -287,7 +287,9 @@ export TZ="Africa/Lagos"
 export LC_ALL="C.UTF-8"
 
 export R8_MAX_HEAP_SIZE=2048M
-m derp
+CALC_JOBS=$(( JOBS / 2 ))
+m derp -j"${CALC_JOBS}"
+
 
 END_TIME="$(date +%s)"
 DUR=$(( END_TIME - START_TIME ))
