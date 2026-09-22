@@ -151,6 +151,9 @@ echo "--> Fetching local device manifests..."
 git clone --depth=1 -b "${MANIFEST_LOCAL_BRANCH}" "${MANIFEST_LOCAL_REPO}" .repo/local_manifests || true
 
 if [ -f /opt/crave/resync.sh ]; then
+  # resync.sh cannot drop leftover projects from an older base when they are dirty
+  # (repo: "Cannot remove project: uncommitted changes are present"). If it fails,
+  # the forced sync below finishes the job - and THAT one must succeed.
   echo "--> Resyncing Sources via Crave..."
   /opt/crave/resync.sh || { echo "⚠️ resync.sh failed - continuing with the forced sync"; tg_send "⚠️ *resync.sh failed* - falling back to forced sync"; }
   run_step "Forced Sync (manifest overrides local changes)" repo sync -c --force-sync --force-remove-dirty --no-tags --no-clone-bundle -j"${JOBS}"
@@ -166,8 +169,13 @@ run_step "Force Re-sync (pinned projects)" repo sync --force-sync --force-remove
 # ==============================================================================
 # 1b. HOST CLANG GUARD (fixes "Unable to find libclang" in libbinder_ndk_bindgen)
 # ==============================================================================
+# Soong hard-codes LIBCLANG_PATH=<clang>/lib/ on the bindgen command line, so
+# exporting our own value can never help. The files themselves must be complete.
+# So: check them, and only if they are broken, repair (cheapest fix first).
+# (Reason texts avoid * _ ` because they go into Telegram Markdown messages.)
 HOST_CLANG_PRJ="prebuilts/clang/host/linux-x86"
 HOST_CLANG_NAME="clang-r584948"
+HOST_CLANG_TAG="refs/tags/android-17.0.0_r1"  # pinned by the aosp remote in default.xml
 HOST_CLANG_DIR="${HOST_CLANG_PRJ}/${HOST_CLANG_NAME}"
 HOST_CLANG_WHY=""
 HOST_CLANG_FIXED_BY=""
@@ -177,11 +185,11 @@ host_clang_ok() {
   if ! "${HOST_CLANG_DIR}/bin/clang" --version >/dev/null 2>&1; then
     HOST_CLANG_WHY="bin/clang missing or will not run"; return 1
   fi
-  
+  # real libclang.so (>1MB rules out empty files, LFS pointers, broken symlinks)
   if ! find -L "${HOST_CLANG_DIR}/lib" -maxdepth 1 -name 'libclang.so*' -size +1M 2>/dev/null | grep -q .; then
     HOST_CLANG_WHY="no real libclang.so in lib/"; return 1
   fi
- 
+  # builtin headers, which bindgen also needs
   if ! ls "${HOST_CLANG_DIR}"/lib/clang/*/include/stdbool.h >/dev/null 2>&1; then
     HOST_CLANG_WHY="builtin headers missing in lib/clang"; return 1
   fi
@@ -206,7 +214,7 @@ repair_host_clang() {
   rm -rf "${HOST_CLANG_DIR}"
   mkdir -p "${HOST_CLANG_DIR}"
   curl -fsSL --retry 3 -o host-clang.tgz \
-    "https://android.googlesource.com/platform/${HOST_CLANG_PRJ}/+archive/refs/heads/main/${HOST_CLANG_NAME}.tar.gz" \
+    "https://android.googlesource.com/platform/${HOST_CLANG_PRJ}/+archive/${HOST_CLANG_TAG}/${HOST_CLANG_NAME}.tar.gz" \
     && tar -xzf host-clang.tgz -C "${HOST_CLANG_DIR}" || true
   rm -f host-clang.tgz
   if host_clang_ok; then HOST_CLANG_FIXED_BY="3/3 (Google download)"; return 0; fi
