@@ -178,18 +178,13 @@ host_clang_ok() {
   if ! "${HOST_CLANG_DIR}/bin/clang" --version >/dev/null 2>&1; then
     HOST_CLANG_WHY="bin/clang missing or will not run"; return 1
   fi
-  # find a real libclang.so* candidate (size rules out empty files/LFS pointers before we
-  # bother trying to load it) then confirm it actually loads - catches truncated/corrupt
-  # files that are still large enough to pass a size-only check
+  
   local so
   so="$(find -L "${HOST_CLANG_DIR}/lib" -maxdepth 1 -name 'libclang.so*' -size +1M 2>/dev/null | head -1)"
   if [ -z "${so}" ]; then
     HOST_CLANG_WHY="no real libclang.so in lib/"; return 1
   fi
   if command -v python3 >/dev/null 2>&1; then
-    # a badly truncated .so can SIGBUS on mmap - bash prints that straight to the
-    # log outside normal redirection, so swap the shell's own stderr aside for
-    # this one call; the exit code (still non-zero either way) is all we need.
     exec 9>&2; exec 2>/dev/null
     python3 -c "import ctypes,sys; ctypes.CDLL(sys.argv[1])" "${so}" >/dev/null 2>&1
     local load_rc=$?
@@ -270,13 +265,71 @@ rm -rf hardware/dolby
 run_step "Cloning Dolby Hardware" git clone https://github.com/adi8900/hardware_dolby -b lunaris hardware/dolby
 echo "✅ Hardware paths configured!"
 
-echo "--> Ensuring kernel-specific clang (r416183b) is available..."
+echo "--> Ensuring kernel-specific clang (r416183b) is available and working..."
 KERNEL_CLANG_DIR="prebuilts/clang/host/linux-x86/clang-r416183b"
-if [ ! -x "${KERNEL_CLANG_DIR}/bin/clang" ]; then
-  echo "--> clang-r416183b not found, fetching for kernel build..."
+KERNEL_CLANG_WHY=""
+KERNEL_CLANG_FIXED_BY=""
+KERNEL_CLANG_AOSP_COMMIT="8fd13dca1a6dfbc43fc54b2408d49199981c387b"
+
+kernel_clang_ok() {
+  KERNEL_CLANG_WHY=""
+  if [ ! -x "${KERNEL_CLANG_DIR}/bin/clang" ]; then
+    KERNEL_CLANG_WHY="bin/clang missing or not executable"; return 1
+  fi
+
+  local log rc out
+  log=$(mktemp)
+  exec 9>&2; exec 2>/dev/null 
+  LD_LIBRARY_PATH="${KERNEL_CLANG_DIR}/lib64:${LD_LIBRARY_PATH:-}" \
+    "${KERNEL_CLANG_DIR}/bin/clang" --target=aarch64-linux-gnu \
+    -fstack-protector-strong -Werror -c -x c /dev/null -o /dev/null \
+    >"${log}" 2>&1
+  rc=$?
+  exec 2>&9 9>&-
+  if [ "${rc}" -ne 0 ]; then
+    out="$(cat "${log}")"
+    KERNEL_CLANG_WHY="self-test compile failed (exit ${rc}): ${out:-no output, likely crashed}"
+    rm -f "${log}"
+    return 1
+  fi
+  rm -f "${log}"
+  return 0
+}
+
+repair_kernel_clang() {
+  echo "--> Repair 1/2: re-cloning kernel clang-r416183b from LineageOS (GitHub)..."
+  rm -rf "${KERNEL_CLANG_DIR}"
   git clone --depth=1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git "${KERNEL_CLANG_DIR}"
+  if kernel_clang_ok; then KERNEL_CLANG_FIXED_BY="1/2 (LineageOS re-clone)"; return 0; fi
+
+  echo "--> Repair 2/2: downloading clang-r416183b straight from Google (AOSP prebuilts history)..."
+  rm -rf "${KERNEL_CLANG_DIR}"
+  mkdir -p "${KERNEL_CLANG_DIR}"
+  curl -fsSL --retry 3 -o kernel-clang.tgz \
+    "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/${KERNEL_CLANG_AOSP_COMMIT}/clang-r416183b.tar.gz" \
+    && tar -xzf kernel-clang.tgz -C "${KERNEL_CLANG_DIR}" || true
+  rm -f kernel-clang.tgz
+  if kernel_clang_ok; then KERNEL_CLANG_FIXED_BY="2/2 (Google AOSP download)"; return 0; fi
+
+  return 1
+}
+
+if kernel_clang_ok; then
+  echo "✅ Kernel clang-r416183b is present and passes its compile self-test."
+else
+  echo "⚠️ Kernel clang-r416183b problem: ${KERNEL_CLANG_WHY}"
+  tg_send "⚠️ *Kernel clang-r416183b problem*: ${KERNEL_CLANG_WHY}
+Repairing before build..." || true
+  if ! repair_kernel_clang; then
+    echo "❌ Kernel clang-r416183b still broken after both repairs (${KERNEL_CLANG_WHY}); stopping now."
+    tg_send "❌ Kernel clang-r416183b still broken after both repairs: ${KERNEL_CLANG_WHY}" || true
+    exit 1
+  fi
+  echo "✅ Kernel clang-r416183b repaired by repair ${KERNEL_CLANG_FIXED_BY}."
+  tg_send "✅ Kernel clang-r416183b repaired by repair ${KERNEL_CLANG_FIXED_BY}." || true
 fi
-file "${KERNEL_CLANG_DIR}/bin/clang"  
+file "${KERNEL_CLANG_DIR}/bin/clang"
+
 
 # ==============================================================================
 # 3. VERIFICATION ASSETS SETUP (IN-MEMORY AES-256 DECRYPTION)
