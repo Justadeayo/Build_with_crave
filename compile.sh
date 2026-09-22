@@ -152,16 +152,10 @@ git clone --depth=1 -b "${MANIFEST_LOCAL_BRANCH}" "${MANIFEST_LOCAL_REPO}" .repo
 
 if [ -f /opt/crave/resync.sh ]; then
   echo "--> Resyncing Sources via Crave..."
-  /opt/crave/resync.sh || { echo "⚠️ resync.sh failed - continuing with the forced sync"; tg_send "⚠️ *resync.sh failed* - falling back to forced sync"; }
-  run_step "Forced Sync (manifest overrides local changes)" repo sync -c --force-sync --force-remove-dirty --no-tags --no-clone-bundle -j"${JOBS}"
+  /opt/crave/resync.sh
 else
   run_step "Syncing Sources" repo sync -c --force-sync --force-remove-dirty --no-tags --no-clone-bundle --prune -j"${JOBS}"
 fi
-
-echo "--> Force-refreshing pinned local-manifest projects"
-rm -rf kernel/xiaomi/violet device/xiaomi/violet vendor/xiaomi/violet
-run_step "Force Re-sync (pinned projects)" repo sync --force-sync --force-remove-dirty --no-tags --no-clone-bundle -j"${JOBS}" \
-  kernel/xiaomi/violet device/xiaomi/violet vendor/xiaomi/violet
 
 # ==============================================================================
 # 1b. HOST CLANG GUARD (fixes "Unable to find libclang" in libbinder_ndk_bindgen)
@@ -432,11 +426,9 @@ tg_send "🛠️ *Compilation Started* (m derp)
 
 export TZ="Africa/Lagos"
 export LC_ALL="C.UTF-8"
-
 export R8_MAX_HEAP_SIZE=2048M
-CALC_JOBS=$(( JOBS / 2 ))
-m derp -j"${CALC_JOBS}"
 
+m derp
 
 END_TIME="$(date +%s)"
 DUR=$(( END_TIME - START_TIME ))
