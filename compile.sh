@@ -151,9 +151,6 @@ echo "--> Fetching local device manifests..."
 git clone --depth=1 -b "${MANIFEST_LOCAL_BRANCH}" "${MANIFEST_LOCAL_REPO}" .repo/local_manifests || true
 
 if [ -f /opt/crave/resync.sh ]; then
-  # resync.sh cannot drop leftover projects from an older base when they are dirty
-  # (repo: "Cannot remove project: uncommitted changes are present"). If it fails,
-  # the forced sync below finishes the job - and THAT one must succeed.
   echo "--> Resyncing Sources via Crave..."
   /opt/crave/resync.sh || { echo "⚠️ resync.sh failed - continuing with the forced sync"; tg_send "⚠️ *resync.sh failed* - falling back to forced sync"; }
   run_step "Forced Sync (manifest overrides local changes)" repo sync -c --force-sync --force-remove-dirty --no-tags --no-clone-bundle -j"${JOBS}"
@@ -169,13 +166,9 @@ run_step "Force Re-sync (pinned projects)" repo sync --force-sync --force-remove
 # ==============================================================================
 # 1b. HOST CLANG GUARD (fixes "Unable to find libclang" in libbinder_ndk_bindgen)
 # ==============================================================================
-# Soong hard-codes LIBCLANG_PATH=<clang>/lib/ on the bindgen command line, so
-# exporting our own value can never help. The files themselves must be complete.
-# So: check them, and only if they are broken, repair (cheapest fix first).
-# (Reason texts avoid * _ ` because they go into Telegram Markdown messages.)
 HOST_CLANG_PRJ="prebuilts/clang/host/linux-x86"
 HOST_CLANG_NAME="clang-r584948"
-HOST_CLANG_TAG="refs/tags/android-17.0.0_r1"  # pinned by the aosp remote in default.xml
+HOST_CLANG_TAG="refs/tags/android-17.0.0_r1"
 HOST_CLANG_DIR="${HOST_CLANG_PRJ}/${HOST_CLANG_NAME}"
 HOST_CLANG_WHY=""
 HOST_CLANG_FIXED_BY=""
@@ -185,9 +178,27 @@ host_clang_ok() {
   if ! "${HOST_CLANG_DIR}/bin/clang" --version >/dev/null 2>&1; then
     HOST_CLANG_WHY="bin/clang missing or will not run"; return 1
   fi
-  # real libclang.so (>1MB rules out empty files, LFS pointers, broken symlinks)
-  if ! find -L "${HOST_CLANG_DIR}/lib" -maxdepth 1 -name 'libclang.so*' -size +1M 2>/dev/null | grep -q .; then
+  # find a real libclang.so* candidate (size rules out empty files/LFS pointers before we
+  # bother trying to load it) then confirm it actually loads - catches truncated/corrupt
+  # files that are still large enough to pass a size-only check
+  local so
+  so="$(find -L "${HOST_CLANG_DIR}/lib" -maxdepth 1 -name 'libclang.so*' -size +1M 2>/dev/null | head -1)"
+  if [ -z "${so}" ]; then
     HOST_CLANG_WHY="no real libclang.so in lib/"; return 1
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    # a badly truncated .so can SIGBUS on mmap - bash prints that straight to the
+    # log outside normal redirection, so swap the shell's own stderr aside for
+    # this one call; the exit code (still non-zero either way) is all we need.
+    exec 9>&2; exec 2>/dev/null
+    python3 -c "import ctypes,sys; ctypes.CDLL(sys.argv[1])" "${so}" >/dev/null 2>&1
+    local load_rc=$?
+    exec 2>&9 9>&-
+    if [ "${load_rc}" -ne 0 ]; then
+      HOST_CLANG_WHY="libclang.so present but will not load (corrupt/truncated)"; return 1
+    fi
+  elif ! (readelf -h "${so}" >/dev/null 2>&1 && nm -D "${so}" >/dev/null 2>&1); then
+    HOST_CLANG_WHY="libclang.so present but fails ELF/symbol check (corrupt/truncated)"; return 1
   fi
   # builtin headers, which bindgen also needs
   if ! ls "${HOST_CLANG_DIR}"/lib/clang/*/include/stdbool.h >/dev/null 2>&1; then
