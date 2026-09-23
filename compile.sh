@@ -65,7 +65,6 @@ export DEVICE="${DEVICE:-violet}"
 export BUILD_TYPE="${BUILD_TYPE:-user}"
 export BUILD_USERNAME="${BUILD_USERNAME:-Justus26}"
 export BUILD_HOSTNAME="${BUILD_HOSTNAME:-crave}"
-export CCACHE="0"
 
 REPO_MANIFEST_URL="https://github.com/DerpFest-AOSP/android_manifest"
 REPO_MANIFEST_BRANCH="17"
