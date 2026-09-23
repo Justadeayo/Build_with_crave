@@ -21,10 +21,10 @@ jq -r '.["my-signing-keys"]' keys.json | base64 -d | openssl enc -d -aes-256-cbc
 [ -f vendor/lineage-priv/keys/releasekey.pk8 ] && export PRODUCT_DEFAULT_DEV_CERTIFICATE=vendor/lineage-priv/keys/releasekey
 rm -f keys.json; unset KEY_PASS
 
-source build/envsetup.sh
+. build/envsetup.sh
 lunch "lineage_${DEVICE}-cp2a-user"
 tg_send "🛠️ Build started: ${DEVICE}"
-m derp -j"${JOBS}"
+m derp
 
 ZIP=$(ls "${OUT_DIR}"/DerpFest*.zip 2>/dev/null | head -1)
 if [ -n "${ZIP}" ]; then
