@@ -19,6 +19,8 @@ tg_send "🚀 *Build Started:* ${DEVICE} (DerpFest A17)"
 # 2. LOCAL MANIFESTS & CRAVE RESYNC
 # ------------------------------------------------------------------------------
 # rm -rf prebuilts/clang/host/linux-x86/clang-r584948
+rm -rf vendor/MiuiCamera device/xiaomi/violet kernel/xiaomi/violet vendor/xiaomi/violet vendor/lineage-priv/keys .repo/local_manifests 2>/dev/null || true
+
 repo init -u https://github.com/DerpFest-AOSP/android_manifest -b 17 --git-lfs --depth=1
 rm -rf .repo/local_manifests
 git clone --depth=1 -b main https://github.com/Justadeayo/Manifest.git .repo/local_manifests
@@ -92,5 +94,4 @@ else
   tg_send "❌ *Build Completed*, but no output zip found in ${OUT_DIR}."
 fi
 
-# Clean keys from disk after build completion
 rm -rf vendor/lineage-priv/keys/*.pk8 vendor/lineage-priv/keys/*.x509.pem 2>/dev/null || true

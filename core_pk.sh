@@ -19,6 +19,8 @@ tg_send "🚀 *Build Started:* ${DEVICE} (DerpFest A17)"
 # 2. LOCAL MANIFESTS & CRAVE RESYNC
 # ------------------------------------------------------------------------------
 # rm -rf prebuilts/clang/host/linux-x86/clang-r584948
+rm -rf vendor/MiuiCamera device/xiaomi/violet kernel/xiaomi/violet vendor/xiaomi/violet vendor/lineage-priv/keys .repo/local_manifests 2>/dev/null || true
+       
 repo init -u https://github.com/DerpFest-AOSP/android_manifest -b 17 --git-lfs --depth=1
 rm -rf .repo/local_manifests
 git clone --depth=1 -b main https://github.com/Justadeayo/Manifest.git .repo/local_manifests
@@ -27,8 +29,8 @@ if [ -f /opt/crave/resync.sh ]; then
   echo "--> Executing Crave resync..."
   /opt/crave/resync.sh
 fi
-
-rm -rf kernel/xiaomi/violet
+# Not present in manifest anyway just a cosmetic 
+rm -rf kernel/xiaomi/violet || true
 
 # ------------------------------------------------------------------------------
 # 3. HARDWARE TREES

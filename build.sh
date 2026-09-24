@@ -206,6 +206,9 @@ echo "--> Cleaning up workspace lockfiles, and local manifest paths..."
 find .repo/ -name "*.lock" -delete 2>/dev/null || true
 
 rm -rf vendor/MiuiCamera \
+       device/xiaomi/violet \
+       kernel/xiaomi/violet \
+       vendor/xiaomi/violet \
        hardware/xiaomi \
        hardware/dolby \
        vendor/lineage-priv/keys \

@@ -69,7 +69,7 @@ export BUILD_HOSTNAME="${BUILD_HOSTNAME:-crave}"
 REPO_MANIFEST_URL="https://github.com/DerpFest-AOSP/android_manifest"
 REPO_MANIFEST_BRANCH="17"
 MANIFEST_LOCAL_REPO="https://github.com/Justadeayo/Manifest.git"
-MANIFEST_LOCAL_BRANCH="main"
+MANIFEST_LOCAL_BRANCH="17p"
 
 OUT_DIR="out/target/product/${DEVICE}"
 GOFILE_RETRY_MAX=8
@@ -139,6 +139,9 @@ echo "--> Cleaning up workspace lockfiles and local manifest paths..."
 find .repo/ -name "*.lock" -delete 2>/dev/null || true
 
 rm -rf vendor/MiuiCamera \
+       device/xiaomi/violet \
+       kernel/xiaomi/violet \
+       vendor/xiaomi/violet \
        hardware/xiaomi \
        hardware/dolby \
        vendor/lineage-priv/keys \
@@ -155,7 +158,7 @@ if [ -f /opt/crave/resync.sh ]; then
 else
   run_step "Syncing Sources" repo sync -c --force-sync --force-remove-dirty --no-tags --no-clone-bundle --prune -j"${JOBS}"
 fi
-
+# Not present in manifest anyway, just a cosmetic. 😉
 rm -rf kernel/xiaomi/violet
 
 # ==============================================================================
