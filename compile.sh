@@ -141,6 +141,7 @@ find .repo/ -name "*.lock" -delete 2>/dev/null || true
 rm -rf vendor/MiuiCamera \
        device/xiaomi/violet \
        kernel/xiaomi/violet \
+       vendor/xiaomi/violet \
        hardware/xiaomi \
        hardware/dolby \
        vendor/lineage-priv/keys \
@@ -274,10 +275,12 @@ kernel_clang_ok() {
 
   local log rc out
   log=$(mktemp)
-  exec 9>&2; exec 2>/dev/null 
+  exec 9>&2; exec 2>/dev/null
   LD_LIBRARY_PATH="${KERNEL_CLANG_DIR}/lib64:${LD_LIBRARY_PATH:-}" \
     "${KERNEL_CLANG_DIR}/bin/clang" --target=aarch64-linux-gnu \
-    -fstack-protector-strong -Werror -c -x c /dev/null -o /dev/null \
+    -fstack-protector-strong -Werror \
+    -Wno-error=unused-command-line-argument -Wno-unused-command-line-argument \
+    -c -x c /dev/null -o /dev/null \
     >"${log}" 2>&1
   rc=$?
   exec 2>&9 9>&-
