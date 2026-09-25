@@ -315,6 +315,7 @@ tg_send "🛠️ *Compilation Started* (m derp)
 export TZ="Africa/Lagos"
 export LC_ALL="C.UTF-8"
 export R8_MAX_HEAP_SIZE=2048M
+export BUILD_BROKEN_MISSING_REQUIRED_MODULES=true
 
 m derp
 
