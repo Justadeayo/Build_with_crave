@@ -47,14 +47,21 @@ if ! command -v repo >/dev/null 2>&1; then
 fi
 
 # ==============================================================================
-# NOTIFICATION & KEY RELAY CONFIGURATION
+# NOTIFICATION & CREDENTIAL SETUP
 # ==============================================================================
-WORKER_URL="https://crave-ok.justadeayo.workers.dev"
+if [ -f "$HOME/.config/telegram/env" ]; then
+  source "$HOME/.config/telegram/env"
+  echo "✅ Loaded Telegram credentials from $HOME/.config/telegram/env"
+else
+  echo "⚠️ Telegram credentials file ($HOME/.config/telegram/env) not found — notifications will be disabled."
+fi
 
 tg_send() {
   local msg="$1"
-  if [ -n "${WORKER_URL}" ]; then
-    curl -sS -X POST "${WORKER_URL}" \
+  if [ -n "${TELEGRAM_BOT_TOKEN}" ] && [ -n "${TELEGRAM_CHAT_ID}" ]; then
+    curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+      -d "chat_id=${TELEGRAM_CHAT_ID}" \
+      -d "parse_mode=Markdown" \
       --data-urlencode "text=${msg}" >/dev/null 2>&1 || true
   fi
 }
@@ -83,7 +90,7 @@ get_wat_time() {
 }
 
 # ==============================================================================
-# SECURE CLEANUP FUNCTION & ERROR TRAP
+# SECURE ERROR TRAP
 # ==============================================================================
 cleanup() {
   local exit_code=$?
@@ -96,9 +103,6 @@ cleanup() {
 ⚠️ *Exit Code:* \`${exit_code}\`
 ⏰ *Failed at:* $(get_wat_time)"
   fi
-
-  echo "🧹 Wiping key assets from memory..."
-  rm -rf vendor/lineage-priv/keys/*.pk8 vendor/lineage-priv/keys/*.x509.pem 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 
@@ -135,8 +139,9 @@ tg_send "🚀 *Build Started!*
 echo "--> Wiping local git changes across all repos (edits AND untracked files)..."
 repo forall -j"${JOBS}" -c 'if [ -n "$(git status --porcelain 2>/dev/null)" ]; then git reset --hard HEAD && git clean -fdx; fi' 2>/dev/null || true
 
-echo "--> Cleaning up workspace lockfiles and local manifest paths..."
+echo "--> Cleaning up workspace lockfiles, local manifest paths, and conflicting hooks..."
 find .repo/ -name "*.lock" -delete 2>/dev/null || true
+find .repo/projects -type d -name hooks -exec rm -rf {} + 2>/dev/null || true
 
 rm -rf vendor/MiuiCamera \
        device/xiaomi/violet \
@@ -144,7 +149,6 @@ rm -rf vendor/MiuiCamera \
        vendor/xiaomi/violet \
        hardware/xiaomi \
        hardware/dolby \
-       vendor/lineage-priv/keys \
        .repo/local_manifests 2>/dev/null || true
 
 run_step "Initializing Repository" repo init -u "${REPO_MANIFEST_URL}" -b "${REPO_MANIFEST_BRANCH}" --git-lfs --depth=1
@@ -191,7 +195,6 @@ host_clang_ok() {
   elif ! (readelf -h "${so}" >/dev/null 2>&1 && nm -D "${so}" >/dev/null 2>&1); then
     HOST_CLANG_WHY="libclang.so present but fails ELF/symbol check (corrupt/truncated)"; return 1
   fi
-  # builtin headers, which bindgen also needs
   if ! ls "${HOST_CLANG_DIR}"/lib/clang/*/include/stdbool.h >/dev/null 2>&1; then
     HOST_CLANG_WHY="builtin headers missing in lib/clang"; return 1
   fi
@@ -229,7 +232,6 @@ if host_clang_ok; then
 else
   CLANG_WHY="${HOST_CLANG_WHY}"
   echo "⚠️ Host ${HOST_CLANG_NAME} incomplete (${CLANG_WHY}) - repairing before the build..."
-  echo "--> Files that differ from git's record (first 20, for the log only):"
 
   CLANG_DIFF_LOG=$(git -C "${HOST_CLANG_PRJ}" status --short -- "${HOST_CLANG_NAME}" 2>&1 | head -20 || true)
   CLANG_DIFF_LOG="${CLANG_DIFF_LOG:-(none - git sees no differences)}"
@@ -328,65 +330,12 @@ Repairing before build..." || true
 fi
 file "${KERNEL_CLANG_DIR}/bin/clang"
 
-
 # ==============================================================================
-# 3. VERIFICATION ASSETS SETUP (IN-MEMORY AES-256 DECRYPTION)
+# 3. VERIFICATION ASSETS SETUP (LOCAL PERSISTENT KEYS)
 # ==============================================================================
-echo "--> Initializing build environment assets..."
-mkdir -p vendor/lineage-priv/keys
+echo "--> Verifying persistent signing assets..."
 
-ASSET_URL="${ASSET_URL:-https://gist.githubusercontent.com/Justadeayo/9f813a5fd4b35290aa666fac735fda4d/raw/32ac18aae99a1712e804d31ac0a02b767d915163/keys.json}"
-JSON_KEY="my-signing-keys"  
-
-KEY_COUNT=0
-
-if [ -n "${ASSET_URL}" ]; then
-  KEY_PASS=$(curl -sSL "${WORKER_URL}/get-key" || true)
-  KEY_PASS=$(printf '%s' "${KEY_PASS}" | tr -d '\r\n' | sed -e 's/^ *//' -e 's/ *$//')
-
-  if [ -n "${KEY_PASS}" ]; then
-    echo "🔑 Passphrase received (${#KEY_PASS} chars) — decrypting verification assets..."
-
-    KTMP="$(mktemp -d ./keydec.XXXXXX 2>/dev/null || echo "./keydec.$$")"
-    mkdir -p "${KTMP}"
-    DECRYPT_OK=0
-
-    if curl -sSL "${ASSET_URL}" -o "${KTMP}/keys.json" && [ -s "${KTMP}/keys.json" ]; then
-      if jq -e -r ".[\"${JSON_KEY}\"] // empty" "${KTMP}/keys.json" > "${KTMP}/keys.b64" 2>"${KTMP}/jq.err" \
-         && [ -s "${KTMP}/keys.b64" ]; then
-        if base64 -d < "${KTMP}/keys.b64" > "${KTMP}/keys.bin" 2>"${KTMP}/b64.err"; then
-          if openssl enc -d -aes-256-cbc -pbkdf2 \
-              -pass pass:"${KEY_PASS}" -in "${KTMP}/keys.bin" -out "${KTMP}/keys.tar.gz" 2>"${KTMP}/openssl.err"; then
-            if tar -xzf "${KTMP}/keys.tar.gz" -C vendor/lineage-priv/keys/ 2>"${KTMP}/tar.err"; then
-              DECRYPT_OK=1
-            else
-              echo "⚠️ Decrypted, but archive extraction failed:"
-              sed 's/^/    /' "${KTMP}/tar.err"
-            fi
-          else
-            echo "⚠️ Decryption failed (wrong passphrase, or gist ciphertext stale/mismatched):"
-            sed 's/^/    /' "${KTMP}/openssl.err"
-          fi
-        else
-          echo "⚠️ Base64 decode failed — gist payload is malformed:"
-          sed 's/^/    /' "${KTMP}/b64.err"
-        fi
-      else
-        echo "⚠️ Could not extract \"${JSON_KEY}\" field from gist JSON:"
-        sed 's/^/    /' "${KTMP}/jq.err"
-      fi
-    else
-      echo "⚠️ Failed to fetch ASSET_URL (empty response or unreachable)."
-    fi
-    rm -rf "${KTMP}"
-    unset KEY_PASS
-
-    [ "${DECRYPT_OK}" -eq 1 ] && echo "✅ Verification assets decrypted." || echo "⚠️ Falling back to standard verification profile."
-  else
-    echo "⚠️ Could not retrieve decryption passphrase from Worker."
-  fi
-fi
-
+# Standardize directory structure if nested folders exists
 for CANDIDATE in my-signing-keys my_signing_keys my_private_keys; do
   if [ -d "vendor/lineage-priv/keys/${CANDIDATE}" ]; then
     mv vendor/lineage-priv/keys/"${CANDIDATE}"/* vendor/lineage-priv/keys/ 2>/dev/null || true
@@ -398,14 +347,14 @@ KEY_COUNT=$(ls -1 vendor/lineage-priv/keys/*.pk8 2>/dev/null | wc -l)
 
 if [ "$KEY_COUNT" -gt 0 ] && [ -f "vendor/lineage-priv/keys/releasekey.pk8" ]; then
   echo "====================================="
-  echo "✅ Target output verification profile active ($KEY_COUNT assets)!"
+  echo "✅ Target output verification profile active ($KEY_COUNT assets found)!"
   echo "====================================="
   export PRODUCT_DEFAULT_DEV_CERTIFICATE=vendor/lineage-priv/keys/releasekey
   SM="Custom"
   tg_send "🔑 *Asset Status:* Loaded with ${KEY_COUNT} items (\`${SM}\`)"
 else
   echo "====================================="
-  echo "⚠️ Standard verification profile active."
+  echo "⚠️ Standard verification profile active (No persistent keys found in vendor/lineage-priv/keys)."
   echo "====================================="
   SM="Default"
   tg_send "⚠️ *Asset Status:* Standard fallback active (\`${SM}\`)"
