@@ -49,11 +49,11 @@ fi
 # ==============================================================================
 # NOTIFICATION & CREDENTIAL SETUP
 # ==============================================================================
-if [ -f "$HOME/.config/telegram/env" ]; then
-  source "$HOME/.config/telegram/env"
-  echo "✅ Loaded Telegram credentials from $HOME/.config/telegram/env"
+if [ -f "$(pwd)/.secrets.env" ]; then
+  source "$(pwd)/.secrets.env"
+  echo "✅ Loaded Telegram credentials"
 else
-  echo "⚠️ Telegram credentials file ($HOME/.config/telegram/env) not found — notifications will be disabled."
+  echo "⚠️ Telegram credentials file not found — notifications will be disabled."
 fi
 
 tg_send() {
