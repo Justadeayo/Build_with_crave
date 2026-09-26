@@ -46,6 +46,10 @@ if ! command -v repo >/dev/null 2>&1; then
   echo "   If this isn't Crave, install it manually before continuing."
 fi
 
+if ! command -v arm-linux-gnueabi-gcc >/dev/null 2>&1; then
+  echo "⚠️ arm-linux-gnueabi-gcc not found — attempting install..."
+  sudo apt-get update -qq && sudo apt-get install -y gcc-arm-linux-gnueabi || true
+fi
 # ==============================================================================
 # NOTIFICATION & CREDENTIAL SETUP
 # ==============================================================================
