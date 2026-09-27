@@ -147,7 +147,8 @@ echo "--> Cleaning up workspace lockfiles, local manifest paths, and conflicting
 find .repo/ -name "*.lock" -delete 2>/dev/null || true
 find .repo/projects -type d -name hooks -exec rm -rf {} + 2>/dev/null || true
 
-rm -rf vendor/MiuiCamera \
+rm -rf prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 \
+       vendor/MiuiCamera \
        device/xiaomi/violet \
        kernel/xiaomi/violet \
        vendor/xiaomi/violet \
@@ -168,25 +169,24 @@ else
 fi
 
 # ==============================================================================
-# 1b. HOST CLANG GUARD (fixes "Unable to find libclang" in libbinder_ndk_bindgen)
+# 1b. CLANG GUARD (fixes "Unable to find libclang" in libbinder_ndk_bindgen)
 # ==============================================================================
-HOST_CLANG_PRJ="prebuilts/clang/host/linux-x86"
-HOST_CLANG_NAME="clang-r584948"
-HOST_CLANG_TAG="refs/tags/android-17.0.0_r1"
-HOST_CLANG_DIR="${HOST_CLANG_PRJ}/${HOST_CLANG_NAME}"
-HOST_CLANG_WHY=""
-HOST_CLANG_FIXED_BY=""
+CLANG_PRJ="prebuilts/clang/host/linux-x86"
+CLANG_TAG="refs/tags/android-17.0.0_r1"
+CLANG_WHY=""
+CLANG_FIXED_BY=""
 
-host_clang_ok() {
-  HOST_CLANG_WHY=""
-  if ! "${HOST_CLANG_DIR}/bin/clang" --version >/dev/null 2>&1; then
-    HOST_CLANG_WHY="bin/clang missing or will not run"; return 1
+clang_ok() {
+  local dir="$1"
+  CLANG_WHY=""
+  if ! "${dir}/bin/clang" --version >/dev/null 2>&1; then
+    CLANG_WHY="bin/clang missing or will not run"; return 1
   fi
-  
+
   local so
-  so="$(find -L "${HOST_CLANG_DIR}/lib" -maxdepth 1 -name 'libclang.so*' -size +1M 2>/dev/null | head -1)"
+  so="$(find -L "${dir}/lib" -maxdepth 1 -name 'libclang.so*' -size +1M 2>/dev/null | head -1)"
   if [ -z "${so}" ]; then
-    HOST_CLANG_WHY="no real libclang.so in lib/"; return 1
+    CLANG_WHY="no real libclang.so in lib/"; return 1
   fi
   if command -v python3 >/dev/null 2>&1; then
     exec 9>&2; exec 2>/dev/null
@@ -194,66 +194,67 @@ host_clang_ok() {
     local load_rc=$?
     exec 2>&9 9>&-
     if [ "${load_rc}" -ne 0 ]; then
-      HOST_CLANG_WHY="libclang.so present but will not load (corrupt/truncated)"; return 1
+      CLANG_WHY="libclang.so present but will not load (corrupt/truncated)"; return 1
     fi
   elif ! (readelf -h "${so}" >/dev/null 2>&1 && nm -D "${so}" >/dev/null 2>&1); then
-    HOST_CLANG_WHY="libclang.so present but fails ELF/symbol check (corrupt/truncated)"; return 1
+    CLANG_WHY="libclang.so present but fails ELF/symbol check (corrupt/truncated)"; return 1
   fi
-  if ! ls "${HOST_CLANG_DIR}"/lib/clang/*/include/stdbool.h >/dev/null 2>&1; then
-    HOST_CLANG_WHY="builtin headers missing in lib/clang"; return 1
+  if ! ls "${dir}"/lib/clang/*/include/stdbool.h >/dev/null 2>&1; then
+    CLANG_WHY="builtin headers missing in lib/clang"; return 1
   fi
   return 0
 }
 
-repair_host_clang() {
-  local name
+repair_clang() {
+  local prj="$1" name="$2" tag="$3" dir="$4"
 
-  echo "--> Repair 1/3: restoring ${HOST_CLANG_NAME} from git objects already in the workspace..."
-  git -C "${HOST_CLANG_PRJ}" checkout HEAD -- "${HOST_CLANG_NAME}" 2>&1 | tail -3 || true
-  if host_clang_ok; then HOST_CLANG_FIXED_BY="1/3 (git restore)"; return 0; fi
+  echo "--> Repair 1/2: restoring ${name} from git objects already in the workspace..."
+  git -C "${prj}" checkout HEAD -- "${name}" 2>&1 | tail -3 || true
+  if clang_ok "${dir}"; then CLANG_FIXED_BY="1/2 (git restore)"; return 0; fi
 
-  echo "--> Repair 2/3: wiping the clang project + repo's copy of it, then re-cloning..."
-  name="$(repo list -n "${HOST_CLANG_PRJ}" 2>/dev/null | head -1)"
-  rm -rf "${HOST_CLANG_PRJ}" ".repo/projects/${HOST_CLANG_PRJ}.git"
-  if [ -n "${name}" ]; then rm -rf ".repo/project-objects/${name}.git"; fi
-  repo sync -c --force-sync --no-tags --no-clone-bundle -j4 "${HOST_CLANG_PRJ}" || true
-  if host_clang_ok; then HOST_CLANG_FIXED_BY="2/3 (re-clone)"; return 0; fi
-
-  echo "--> Repair 3/3: downloading ${HOST_CLANG_NAME} straight from Google..."
-  rm -rf "${HOST_CLANG_DIR}"
-  mkdir -p "${HOST_CLANG_DIR}"
-  curl -fsSL --retry 3 -o host-clang.tgz \
-    "https://android.googlesource.com/platform/${HOST_CLANG_PRJ}/+archive/${HOST_CLANG_TAG}/${HOST_CLANG_NAME}.tar.gz" \
-    && tar -xzf host-clang.tgz -C "${HOST_CLANG_DIR}" || true
-  rm -f host-clang.tgz
-  if host_clang_ok; then HOST_CLANG_FIXED_BY="3/3 (Google download)"; return 0; fi
+  echo "--> Repair 2/2: downloading ${name} straight from Google..."
+  rm -rf "${dir}"
+  mkdir -p "${dir}"
+  curl -fsSL --retry 3 -o clang-dl.tgz \
+    "https://android.googlesource.com/platform/${prj}/+archive/${tag}/${name}.tar.gz" \
+    && tar -xzf clang-dl.tgz -C "${dir}" || true
+  rm -f clang-dl.tgz
+  if clang_ok "${dir}"; then CLANG_FIXED_BY="2/2 (Google download)"; return 0; fi
 
   return 1
 }
 
-if host_clang_ok; then
-  echo "✅ Host ${HOST_CLANG_NAME} is complete."
-else
-  CLANG_WHY="${HOST_CLANG_WHY}"
-  echo "⚠️ Host ${HOST_CLANG_NAME} incomplete (${CLANG_WHY}) - repairing before the build..."
+ensure_clang() {
+  local prj="$1" name="$2" tag="$3" dir="${1}/${2}"
 
-  CLANG_DIFF_LOG=$(git -C "${HOST_CLANG_PRJ}" status --short -- "${HOST_CLANG_NAME}" 2>&1 | head -20 || true)
-  CLANG_DIFF_LOG="${CLANG_DIFF_LOG:-(none - git sees no differences)}"
-  echo "${CLANG_DIFF_LOG}"
+  if clang_ok "${dir}"; then
+    echo "✅ ${name} is complete."
+    return 0
+  fi
+  local why="${CLANG_WHY}"
+  echo "⚠️ ${name} incomplete (${why}) - repairing before the build..."
 
-  tg_send "⚠️ *Host ${HOST_CLANG_NAME} incomplete* (${CLANG_WHY}) - repairing before build
+  local diff_log
+  diff_log=$(git -C "${prj}" status --short -- "${name}" 2>&1 | head -20 || true)
+  diff_log="${diff_log:-(none - git sees no differences)}"
+  echo "${diff_log}"
+
+  tg_send "⚠️ *${name} incomplete* (${why}) - repairing before build
 \`\`\`
-${CLANG_DIFF_LOG}
+${diff_log}
 \`\`\`" || true
 
-  if ! repair_host_clang; then
-    echo "❌ Could not repair ${HOST_CLANG_NAME} (${HOST_CLANG_WHY}); bindgen would fail, so stopping now."
-    tg_send "❌ Could not repair ${HOST_CLANG_NAME} (${HOST_CLANG_WHY}); bindgen would fail." || true
+  if ! repair_clang "${prj}" "${name}" "${tag}" "${dir}"; then
+    echo "❌ Could not repair ${name} (${CLANG_WHY}); build would fail, so stopping now."
+    tg_send "❌ Could not repair ${name} (${CLANG_WHY}); build would fail." || true
     exit 1
   fi
-  echo "✅ Host ${HOST_CLANG_NAME} repaired by repair ${HOST_CLANG_FIXED_BY}."
-  tg_send "✅ Host ${HOST_CLANG_NAME} repaired by repair ${HOST_CLANG_FIXED_BY}." || true
-fi
+  echo "✅ ${name} repaired by repair ${CLANG_FIXED_BY}."
+  tg_send "✅ ${name} repaired by repair ${CLANG_FIXED_BY}." || true
+}
+
+ensure_clang "${CLANG_PRJ}" "clang-r584948" "${CLANG_TAG}"
+ensure_clang "${CLANG_PRJ}" "clang-r596125" "${CLANG_TAG}"
 
 # ==============================================================================
 # 2. HARDWARE TREES

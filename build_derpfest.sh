@@ -105,7 +105,9 @@ fi
 # ==============================================================================
 section "verifying toolchains + hardware trees"
 
-setup_host_clang
+ensure_clang "${CLANG_PRJ}" "clang-r584948" "${CLANG_TAG}"
+ensure_clang "${CLANG_PRJ}" "clang-r596125" "${CLANG_TAG}"
+
 
 rm -rf hardware/xiaomi
 run_step "Cloning Xiaomi Hardware" git clone https://github.com/Evolution-X-Devices/hardware_xiaomi -b bka-no-dolby hardware/xiaomi
