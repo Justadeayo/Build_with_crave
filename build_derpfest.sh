@@ -124,6 +124,8 @@ echo "✅ Hardware paths configured!"
 
 setup_kernel_clang
 
+missing_tools
+
 
 
 

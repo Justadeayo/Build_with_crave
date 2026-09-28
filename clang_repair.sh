@@ -168,3 +168,26 @@ Repairing before build..." || true
   fi
   file "${KERNEL_CLANG_DIR}/bin/clang"
 }
+
+
+
+
+
+
+CROSS_TOOLS="arm-linux-gnueabi-gcc arm-linux-gnueabi-ld aarch64-linux-gnu-gcc aarch64-linux-gnu-ld aarch64-linux-gnu-elfedit"
+missing_tools() {
+  local t out=""
+  for t in ${CROSS_TOOLS}; do
+    command -v "${t}" >/dev/null 2>&1 || out="${out} ${t}"
+  done
+  echo "${out# }"
+}
+if [ -n "$(missing_tools)" ]; then
+  echo "⚠️ Missing cross tools: $(missing_tools) — attempting install..."
+  sudo apt-get update -qq && sudo apt-get install -y gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu || true
+  if [ -z "$(missing_tools)" ]; then
+    echo "✅ Cross toolchains ready."
+  else
+    echo "⚠️ Still missing: $(missing_tools) — the inline kernel build will fail."
+  fi
+fi
