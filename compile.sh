@@ -46,10 +46,19 @@ if ! command -v repo >/dev/null 2>&1; then
   echo "   If this isn't Crave, install it manually before continuing."
 fi
 
-if ! command -v arm-linux-gnueabi-gcc >/dev/null 2>&1; then
-  echo "⚠️ arm-linux-gnueabi-gcc not found — attempting install..."
-  sudo apt-get update -qq && sudo apt-get install -y gcc-arm-linux-gnueabi || true
+if ! command -v arm-linux-gnueabi-gcc >/dev/null 2>&1 || ! command -v arm-linux-gnueabi-ld >/dev/null 2>&1; then
+  echo "⚠️ arm-linux-gnueabi toolchain (gcc/ld) incomplete — attempting install..."
+  sudo apt-get update -qq && sudo apt-get install -y gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi || true
+  if command -v arm-linux-gnueabi-gcc >/dev/null 2>&1 && command -v arm-linux-gnueabi-ld >/dev/null 2>&1; then
+    echo "✅ arm-linux-gnueabi toolchain ready."
+  else
+    echo "⚠️ arm-linux-gnueabi toolchain still incomplete — the inline kernel build will fail at the vDSO32 step."
+  fi
 fi
+
+
+
+
 # ==============================================================================
 # NOTIFICATION & CREDENTIAL SETUP
 # ==============================================================================
@@ -93,6 +102,9 @@ get_wat_time() {
   TZ="Africa/Lagos" date +'%Y-%m-%d %H:%M:%S WAT'
 }
 
+
+
+
 # ==============================================================================
 # SECURE ERROR TRAP
 # ==============================================================================
@@ -109,6 +121,9 @@ cleanup() {
   fi
 }
 trap cleanup EXIT INT TERM
+
+
+
 
 # ==============================================================================
 # STEP EXECUTION WRAPPER
@@ -136,6 +151,9 @@ tg_send "🚀 *Build Started!*
 📱 *Device:* \`${DEVICE}\`
 📦 *ROM:* \`${ROM_NAME}\` (Android 17)
 ⏰ *Started at:* $(get_wat_time)"
+
+
+
 
 # ==============================================================================
 # 1. CLEANUP & SOURCE SYNC
@@ -167,6 +185,9 @@ if [ -f /opt/crave/resync.sh ]; then
 else
   run_step "Syncing Sources" repo sync -c --force-sync --force-remove-dirty --no-tags --no-clone-bundle --prune -j"${JOBS}"
 fi
+
+
+
 
 # ==============================================================================
 # 1b. CLANG GUARD (fixes "Unable to find libclang" in libbinder_ndk_bindgen)
@@ -256,6 +277,9 @@ ${diff_log}
 ensure_clang "${CLANG_PRJ}" "clang-r584948" "${CLANG_TAG}"
 ensure_clang "${CLANG_PRJ}" "clang-r596125" "${CLANG_TAG}"
 
+
+
+
 # ==============================================================================
 # 2. HARDWARE TREES
 # ==============================================================================
@@ -335,6 +359,9 @@ Repairing before build..." || true
 fi
 file "${KERNEL_CLANG_DIR}/bin/clang"
 
+
+
+
 # ==============================================================================
 # 3. VERIFICATION ASSETS SETUP (LOCAL PERSISTENT KEYS)
 # ==============================================================================
@@ -364,6 +391,9 @@ else
   SM="Default"
   tg_send "⚠️ *Asset Status:* Standard fallback active (\`${SM}\`)"
 fi
+
+
+
 
 # ==============================================================================
 # 4. BUILD COMPILATION (FORCE WAT TIMESTAMPS & CP2A TARGET)
@@ -402,6 +432,9 @@ tg_send "🛠️ *Compilation Finished*
 📤 Now processing/uploading artifacts...
 ⏰ $(get_wat_time)"
 
+
+
+
 # ==============================================================================
 # 5. DYNAMIC ARTIFACT DISPATCHER (GOFILE)
 # ==============================================================================
@@ -432,6 +465,9 @@ gofile_upload() {
   done
   return 1
 }
+
+
+
 
 # ==============================================================================
 # 5b. GOOGLE DRIVE DISPATCHER (rclone)
@@ -472,6 +508,9 @@ gdrive_upload() {
   echo "⚠️ Upload succeeded but could not fetch a shareable link for ${FILENAME}." >&2
   return 1
 }
+
+
+
 
 # ==============================================================================
 # 6. ARTIFACT HANDLING & DISPATCH NOTIFICATION
@@ -563,6 +602,10 @@ if [ -f "${OUT_DIR}/recovery.img" ]; then
   REC_GD_URL="$(gdrive_upload "${OUT_DIR}/recovery.img" || true)"
   [ -n "${REC_GD_URL}" ] && UPLOAD_RESULTS+="☁️ Recovery (Gdrive): ${REC_GD_URL}"$'\n'
 fi
+
+
+
+
 
 tg_send "🎉 *Build Finished Successfully!*
 📱 *Device:* \`${DEVICE}\`

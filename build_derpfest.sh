@@ -30,9 +30,14 @@ check_and_install_deps curl jq openssl git rclone
 command -v repo >/dev/null 2>&1 || echo "⚠️ 'repo' not found on PATH — expected preinstalled in the Crave image."
 
 
-if ! command -v arm-linux-gnueabi-gcc >/dev/null 2>&1; then
-  echo "⚠️ arm-linux-gnueabi-gcc not found — attempting install..."
-  sudo apt-get update -qq && sudo apt-get install -y gcc-arm-linux-gnueabi || true
+if ! command -v arm-linux-gnueabi-gcc >/dev/null 2>&1 || ! command -v arm-linux-gnueabi-ld >/dev/null 2>&1; then
+  echo "⚠️ arm-linux-gnueabi toolchain (gcc/ld) incomplete — attempting install..."
+  sudo apt-get update -qq && sudo apt-get install -y gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi || true
+  if command -v arm-linux-gnueabi-gcc >/dev/null 2>&1 && command -v arm-linux-gnueabi-ld >/dev/null 2>&1; then
+    echo "✅ arm-linux-gnueabi toolchain ready."
+  else
+    echo "⚠️ arm-linux-gnueabi toolchain still incomplete — the inline kernel build will fail at the vDSO32 step."
+  fi
 fi
 
 
