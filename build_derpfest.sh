@@ -122,7 +122,6 @@ rm -rf hardware/dolby
 run_step "Cloning Dolby Hardware" git clone https://github.com/adi8900/hardware_dolby -b lunaris hardware/dolby
 echo "✅ Hardware paths configured!"
 
-setup_kernel_clang
 
 missing_tools
 
