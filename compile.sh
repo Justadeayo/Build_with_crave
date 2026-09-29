@@ -46,16 +46,6 @@ if ! command -v repo >/dev/null 2>&1; then
   echo "   If this isn't Crave, install it manually before continuing."
 fi
 
-if ! command -v arm-linux-gnueabi-gcc >/dev/null 2>&1 || ! command -v arm-linux-gnueabi-ld >/dev/null 2>&1; then
-  echo "⚠️ arm-linux-gnueabi toolchain (gcc/ld) incomplete — attempting install..."
-  sudo apt-get update -qq && sudo apt-get install -y gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi || true
-  if command -v arm-linux-gnueabi-gcc >/dev/null 2>&1 && command -v arm-linux-gnueabi-ld >/dev/null 2>&1; then
-    echo "✅ arm-linux-gnueabi toolchain ready."
-  else
-    echo "⚠️ arm-linux-gnueabi toolchain still incomplete — the inline kernel build will fail at the vDSO32 step."
-  fi
-fi
-
 
 
 
@@ -313,72 +303,6 @@ rm -rf hardware/dolby
 run_step "Cloning Dolby Hardware" git clone https://github.com/adi8900/hardware_dolby -b lunaris hardware/dolby
 echo "✅ Hardware paths configured!"
 
-echo "--> Ensuring kernel-specific clang (r416183b) is available and working..."
-KERNEL_CLANG_DIR="prebuilts/clang/host/linux-x86/clang-r416183b"
-KERNEL_CLANG_WHY=""
-KERNEL_CLANG_FIXED_BY=""
-KERNEL_CLANG_AOSP_COMMIT="8fd13dca1a6dfbc43fc54b2408d49199981c387b"
-
-kernel_clang_ok() {
-  KERNEL_CLANG_WHY=""
-  if [ ! -x "${KERNEL_CLANG_DIR}/bin/clang" ]; then
-    KERNEL_CLANG_WHY="bin/clang missing or not executable"; return 1
-  fi
-
-  local log rc out
-  log=$(mktemp)
-  exec 9>&2; exec 2>/dev/null
-  LD_LIBRARY_PATH="${KERNEL_CLANG_DIR}/lib64:${LD_LIBRARY_PATH:-}" \
-    "${KERNEL_CLANG_DIR}/bin/clang" --target=aarch64-linux-gnu \
-    -fstack-protector-strong -Werror \
-    -Wno-error=unused-command-line-argument -Wno-unused-command-line-argument \
-    -c -x c /dev/null -o /dev/null \
-    >"${log}" 2>&1
-  rc=$?
-  exec 2>&9 9>&-
-  if [ "${rc}" -ne 0 ]; then
-    out="$(cat "${log}")"
-    KERNEL_CLANG_WHY="self-test compile failed (exit ${rc}): ${out:-no output, likely crashed}"
-    rm -f "${log}"
-    return 1
-  fi
-  rm -f "${log}"
-  return 0
-}
-
-repair_kernel_clang() {
-  echo "--> Repair 1/2: re-cloning kernel clang-r416183b from LineageOS (GitHub)..."
-  rm -rf "${KERNEL_CLANG_DIR}"
-  git clone --depth=1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git "${KERNEL_CLANG_DIR}"
-  if kernel_clang_ok; then KERNEL_CLANG_FIXED_BY="1/2 (LineageOS re-clone)"; return 0; fi
-
-  echo "--> Repair 2/2: downloading clang-r416183b straight from Google (AOSP prebuilts history)..."
-  rm -rf "${KERNEL_CLANG_DIR}"
-  mkdir -p "${KERNEL_CLANG_DIR}"
-  curl -fsSL --retry 3 -o kernel-clang.tgz \
-    "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/${KERNEL_CLANG_AOSP_COMMIT}/clang-r416183b.tar.gz" \
-    && tar -xzf kernel-clang.tgz -C "${KERNEL_CLANG_DIR}" || true
-  rm -f kernel-clang.tgz
-  if kernel_clang_ok; then KERNEL_CLANG_FIXED_BY="2/2 (Google AOSP download)"; return 0; fi
-
-  return 1
-}
-
-if kernel_clang_ok; then
-  echo "✅ Kernel clang-r416183b is present and passes its compile self-test."
-else
-  echo "⚠️ Kernel clang-r416183b problem: ${KERNEL_CLANG_WHY}"
-  tg_send "⚠️ *Kernel clang-r416183b problem*: ${KERNEL_CLANG_WHY}
-Repairing before build..." || true
-  if ! repair_kernel_clang; then
-    echo "❌ Kernel clang-r416183b still broken after both repairs (${KERNEL_CLANG_WHY}); stopping now."
-    tg_send "❌ Kernel clang-r416183b still broken after both repairs: ${KERNEL_CLANG_WHY}" || true
-    exit 1
-  fi
-  echo "✅ Kernel clang-r416183b repaired by repair ${KERNEL_CLANG_FIXED_BY}."
-  tg_send "✅ Kernel clang-r416183b repaired by repair ${KERNEL_CLANG_FIXED_BY}." || true
-fi
-file "${KERNEL_CLANG_DIR}/bin/clang"
 
 
 
