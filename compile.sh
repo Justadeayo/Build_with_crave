@@ -39,7 +39,9 @@ check_and_install_deps() {
   echo "✅ Installed: ${missing[*]}"
 }
 
-check_and_install_deps curl jq openssl git rclone
+# Core tools + Kernel build requirements + Archive utilities
+check_and_install_deps curl jq openssl git rclone bc flex bison libssl-dev libelf-dev rsync zip unzip build-essential
+
 
 if ! command -v repo >/dev/null 2>&1; then
   echo "⚠️ 'repo' not found on PATH — expected to be preinstalled in the Crave build image."
