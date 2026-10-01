@@ -128,12 +128,8 @@ find .repo/ -name "*.lock" -delete 2>/dev/null || true
 find .repo/projects -type d -name hooks -exec rm -rf {} + 2>/dev/null || true
 
 rm -rf prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 \
-       vendor/MiuiCamera \
        device/xiaomi/violet \
        kernel/xiaomi/violet \
-       vendor/xiaomi/violet \
-       hardware/xiaomi \
-       hardware/dolby \
        .repo/local_manifests 2>/dev/null || true
 
 run_step "Initializing Repository" repo init -u "${REPO_MANIFEST_URL}" -b "${REPO_MANIFEST_BRANCH}" --git-lfs --depth=1
@@ -147,6 +143,8 @@ if [ -f /opt/crave/resync.sh ]; then
 else
   run_step "Syncing Sources" repo sync -c --force-sync --force-remove-dirty --no-tags --no-clone-bundle --prune -j"${JOBS}"
 fi
+
+rm -rf hardware/xiaomi/packages/DSPVolumeSynchronizer
 
 
 
@@ -263,24 +261,9 @@ fi
 
 
 
-# ==============================================================================
-# 2. HARDWARE TREES
-# ==============================================================================
-echo "--> Fetching custom hardware repos..."
-rm -rf hardware/xiaomi
-run_step "Cloning Xiaomi Hardware" git clone https://github.com/Evolution-X-Devices/hardware_xiaomi -b bka-no-dolby hardware/xiaomi
-rm -rf hardware/xiaomi/packages/DSPVolumeSynchronizer
-
-rm -rf hardware/dolby
-run_step "Cloning Dolby Hardware" git clone https://github.com/adi8900/hardware_dolby -b lunaris hardware/dolby
-echo "✅ Hardware paths configured!"
-
-
-
-
 
 # ==============================================================================
-# 3. VERIFICATION ASSETS SETUP (LOCAL PERSISTENT KEYS)
+# 2. VERIFICATION ASSETS SETUP (LOCAL PERSISTENT KEYS)
 # ==============================================================================
 echo "--> Verifying persistent signing assets..."
 
@@ -313,7 +296,7 @@ fi
 
 
 # ==============================================================================
-# 4. BUILD COMPILATION (FORCE WAT TIMESTAMPS & CP2A TARGET)
+# 3. BUILD COMPILATION (FORCE WAT TIMESTAMPS & CP2A TARGET)
 # ==============================================================================
 echo "--> Setting up build environment..."
 
@@ -353,7 +336,7 @@ tg_send "🛠️ *Compilation Finished*
 
 
 # ==============================================================================
-# 5. DYNAMIC ARTIFACT DISPATCHER (GOFILE)
+# 4. DYNAMIC ARTIFACT DISPATCHER (GOFILE)
 # ==============================================================================
 gofile_upload() {
   local FILE="$1"
@@ -387,7 +370,7 @@ gofile_upload() {
 
 
 # ==============================================================================
-# 5b. GOOGLE DRIVE DISPATCHER (rclone)
+# 4b. GOOGLE DRIVE DISPATCHER (rclone)
 # ==============================================================================
 GDRIVE_REMOTE_NAME="${GDRIVE_REMOTE%%:*}"
 GDRIVE_READY=0
@@ -430,7 +413,7 @@ gdrive_upload() {
 
 
 # ==============================================================================
-# 6. ARTIFACT HANDLING & DISPATCH NOTIFICATION
+# 5. ARTIFACT HANDLING & DISPATCH NOTIFICATION
 # ==============================================================================
 echo "--> Processing build artifacts..."
 
