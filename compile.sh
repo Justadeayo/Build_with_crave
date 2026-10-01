@@ -4,49 +4,19 @@ set -e
 export TZ="Africa/Lagos"
 
 # ==============================================================================
-# DEPENDENCY CHECK (auto-install where possible)
+# DEPENDENCY CHECK
 # ==============================================================================
-check_and_install_deps() {
-  local missing=()
-  for dep in "$@"; do
-    command -v "$dep" >/dev/null 2>&1 || missing+=("$dep")
-  done
-  [ "${#missing[@]}" -eq 0 ] && return 0
 
-  echo "⚠️ Missing dependencies: ${missing[*]} — attempting install..."
-
-  if command -v pkg >/dev/null 2>&1; then
-    pkg install -y "${missing[@]}" || true
-  elif command -v apt-get >/dev/null 2>&1; then
-    if [ "$(id -u)" -eq 0 ]; then
-      apt-get update -qq && apt-get install -y "${missing[@]}" || true
-    else
-      sudo apt-get update -qq && sudo apt-get install -y "${missing[@]}" || true
-    fi
-  else
-    echo "❌ No known package manager (pkg/apt-get) found — install manually: ${missing[*]}"
-    exit 1
-  fi
-
-  local still_missing=()
-  for dep in "${missing[@]}"; do
-    command -v "$dep" >/dev/null 2>&1 || still_missing+=("$dep")
-  done
-  if [ "${#still_missing[@]}" -gt 0 ]; then
-    echo "❌ Still missing after install attempt: ${still_missing[*]} — install manually and re-run."
-    exit 1
-  fi
-  echo "✅ Installed: ${missing[*]}"
-}
-
-# Core tools + Kernel build requirements + Archive utilities
-check_and_install_deps curl jq openssl git rclone bc flex bison libssl-dev libelf-dev rsync zip unzip build-essential
-
+for tool in curl jq openssl git rclone bc flex bison rsync zip unzip; do
+  command -v "$tool" >/dev/null 2>&1 || echo "⚠️ Warning: $tool is not installed"
+done
 
 if ! command -v repo >/dev/null 2>&1; then
   echo "⚠️ 'repo' not found on PATH — expected to be preinstalled in the Crave build image."
-  echo "   If this isn't Crave, install it manually before continuing."
+  echo "If this isn't Crave, install it manually before continuing."
+  echo "But this Crave, you don't have a choice 😉"
 fi
+
 
 
 
