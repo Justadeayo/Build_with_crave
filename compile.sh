@@ -126,8 +126,10 @@ repo forall -j"${JOBS}" -c 'if [ -n "$(git status --porcelain 2>/dev/null)" ]; t
 echo "--> Cleaning up workspace lockfiles, local manifest paths, and conflicting hooks..."
 find .repo/ -name "*.lock" -delete 2>/dev/null || true
 find .repo/projects -type d -name hooks -exec rm -rf {} + 2>/dev/null || true
+find .repo/project-objects -type d -name hooks -exec rm -rf {} + 2>/dev/null || true
 
 rm -rf prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 \
+       hardware/qcom-caf/sm8150/display \
        device/xiaomi/violet \
        .repo/local_manifests 2>/dev/null || true
 
@@ -267,6 +269,27 @@ if [ -n "$(missing_tools)" ]; then
     echo "⚠️ Still missing: $(missing_tools) — the inline kernel build will fail."
   fi
 fi
+
+
+
+# ==============================================================================
+# 1c. KERNEL UAPI HEADER SYNC
+# ==============================================================================
+KERNEL_UAPI="kernel/xiaomi/violet/include/uapi"
+DISPLAY_INC="hardware/qcom-caf/sm8150/display/include"
+mkdir -p "${DISPLAY_INC}/drm" "${DISPLAY_INC}/media"
+cp -f "${KERNEL_UAPI}"/drm/sde_*.h "${KERNEL_UAPI}"/drm/msm_*.h "${DISPLAY_INC}/drm/" 2>/dev/null || true
+cp -f "${KERNEL_UAPI}"/media/*.h "${DISPLAY_INC}/media/" 2>/dev/null || true
+for h in drm/sde_drm.h drm/msm_drm_pp.h media/msm_media_info.h; do
+  if [ -f "${DISPLAY_INC}/${h}" ]; then
+    echo "Synced ${h}"
+  else
+    echo "WARNING: ${h} missing after sync"
+  fi
+done
+
+mkdir -p "${DISPLAY_INC}/linux"
+cp -f "${KERNEL_UAPI}"/linux/msm_*.h "${KERNEL_UAPI}"/linux/mdss*.h "${DISPLAY_INC}/linux/" 2>/dev/null || true
 
 
 
