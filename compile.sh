@@ -129,7 +129,6 @@ find .repo/projects -type d -name hooks -exec rm -rf {} + 2>/dev/null || true
 
 rm -rf prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 \
        device/xiaomi/violet \
-       kernel/xiaomi/violet \
        .repo/local_manifests 2>/dev/null || true
 
 run_step "Initializing Repository" repo init -u "${REPO_MANIFEST_URL}" -b "${REPO_MANIFEST_BRANCH}" --git-lfs --depth=1
@@ -145,6 +144,18 @@ else
 fi
 
 rm -rf hardware/xiaomi/packages/DSPVolumeSynchronizer
+
+
+
+if [ ! -f "device/xiaomi/violet/lineage_violet.mk" ]; then
+    echo ">> Critical device tree missing! Refreshing device and display trees..."
+    
+    rm -rf device/xiaomi/violet
+    git clone https://github.com/Justadeayo/device_xiaomi_violet.git -b 17 device/xiaomi/violet
+
+    rm -rf hardware/qcom-caf/sm8150/display
+    git clone https://github.com/Justadeayo/android_hardware_qcom_display.git -b lineage-24.0-caf-sm8150 hardware/qcom-caf/sm8150/display
+fi
 
 
 
