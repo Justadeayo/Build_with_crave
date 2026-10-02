@@ -73,6 +73,9 @@ get_wat_time() {
 cleanup() {
   local exit_code=$?
 
+ echo "--> Generated kernel header check:"
+  find out/soong/.intermediates/vendor/lineage/build/soong/generated_kernel_includes/gen \
+    \( -name videodev2.h -o -name drm_mode.h -o -name sde_drm.h -o -name msm_drm_pp.h -o -name msm_media_info.h -o -name drm_fourcc.h \) 2>/dev/null || true
   if [ "$exit_code" -ne 0 ]; then
     echo "❌ Script aborted with exit code ${exit_code}."
     tg_send "🚨 *Build Failed!*
@@ -130,8 +133,6 @@ find .repo/project-objects -type d -name hooks -exec rm -rf {} + 2>/dev/null || 
 
 rm -rf prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 \
        hardware/qcom-caf/sm8150/display \
-       device/xiaomi/violet \
-       kernel/xiaomi/violet \
        .repo/local_manifests 2>/dev/null || true
 
 run_step "Initializing Repository" repo init -u "${REPO_MANIFEST_URL}" -b "${REPO_MANIFEST_BRANCH}" --git-lfs --depth=1
@@ -171,8 +172,8 @@ fi
 # ==============================================================================
 DISPLAY_HAL_DIR="hardware/qcom-caf/sm8150/display"
 
-if ! grep -q "generated_kernel_headers" "${DISPLAY_HAL_DIR}/Android.bp" 2>/dev/null; then
-    echo "--> Display HAL missing or invalid. Cloning custom fork..."
+if ! grep -q "generated_kernel_headers" "${DISPLAY_HAL_DIR}/Android.bp" 2>/dev/null \
+   || [ ! -f "${DISPLAY_HAL_DIR}/include/linux/videodev2.h" ]; then    echo "--> Display HAL missing or invalid. Cloning custom fork..."
     rm -rf "${DISPLAY_HAL_DIR}"
     git clone --depth=1 https://github.com/Justadeayo/android_hardware_qcom_display -b lineage-24.0-caf-sm8150 "${DISPLAY_HAL_DIR}"
 else
@@ -180,7 +181,6 @@ else
 fi
 
 
-# When I remove rm -rf for device, kernel. and hardware_display from the top, I'll also delete this lines. However, it's only a check but not necessary since /opt/crave/resync.sh would have taken care of it gracefully.
 
 
 
@@ -296,28 +296,13 @@ if [ -n "$(missing_tools)" ]; then
 fi
 
 
-
-# ==============================================================================
-# 1c. KERNEL UAPI HEADER SYNC
-# ==============================================================================
-# KERNEL_UAPI="kernel/xiaomi/violet/include/uapi"
-# DISPLAY_INC="hardware/qcom-caf/sm8150/display/include"
-# mkdir -p "${DISPLAY_INC}/drm" "${DISPLAY_INC}/media"
-# cp -f "${KERNEL_UAPI}"/drm/sde_*.h "${KERNEL_UAPI}"/drm/msm_*.h "${DISPLAY_INC}/drm/" 2>/dev/null || true
-# cp -f "${KERNEL_UAPI}"/media/*.h "${DISPLAY_INC}/media/" 2>/dev/null || true
-# for h in drm/sde_drm.h drm/msm_drm_pp.h media/msm_media_info.h; do
-#   if [ -f "${DISPLAY_INC}/${h}" ]; then
-#     echo "Synced ${h}"
-#   else
-#     echo "WARNING: ${h} missing after sync"
-#   fi
-# done
-
-# mkdir -p "${DISPLAY_INC}/linux"
-# cp -f "${KERNEL_UAPI}"/linux/msm_*.h "${KERNEL_UAPI}"/linux/mdss*.h "${DISPLAY_INC}/linux/" 2>/dev/null || true
-
-# Already fixed in Kernel Tree, but I want it to run at least once so incase my fix didn't work, it's generated into necessary directory. Then I can remove the line completely. 
-
+K=kernel/xiaomi/violet
+H=$(git -C $K rev-parse HEAD)
+if [ "$(cat .kernel_headers_rev 2>/dev/null)" != "$H" ]; then
+  rm -rf out/soong/.intermediates/vendor/lineage/build/soong/generated_kernel_includes
+  rm -rf "${OUT_DIR}/obj/KERNEL_OBJ"
+  echo "$H" > .kernel_headers_rev
+fi
 
 
 
@@ -327,7 +312,6 @@ fi
 # ==============================================================================
 echo "--> Verifying persistent signing assets..."
 
-# Standardize directory structure if nested folders exists
 for CANDIDATE in my-signing-keys my_signing_keys my_private_keys; do
   if [ -d "vendor/lineage-priv/keys/${CANDIDATE}" ]; then
     mv vendor/lineage-priv/keys/"${CANDIDATE}"/* vendor/lineage-priv/keys/ 2>/dev/null || true
@@ -362,20 +346,25 @@ echo "--> Setting up build environment..."
 
 . build/envsetup.sh
 
-rm -rf "${OUT_DIR}/obj/KERNEL_OBJ"
-
 lunch "lineage_${DEVICE}-cp2a-user"
 
 make installclean
 
 echo "--> Starting compilation..."
-tg_send "🛠️ *Compilation Started* (m derp)
-⏰ $(get_wat_time)"
 
 export TZ="Africa/Lagos"
 export LC_ALL="C.UTF-8"
 export R8_MAX_HEAP_SIZE=2048M
 export BUILD_BROKEN_MISSING_REQUIRED_MODULES=true
+export INLINE_KERNEL_BUILDING=true
+
+# ==============================================================================
+# 3b. KERNEL COMMIT CHECK
+# ==============================================================================
+git -C kernel/xiaomi/violet log -1 --oneline || true
+
+tg_send "🛠️ *Compilation Started* (m derp)
+⏰ $(get_wat_time)"
 
 m derp
 
