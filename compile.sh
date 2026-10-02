@@ -131,6 +131,7 @@ find .repo/project-objects -type d -name hooks -exec rm -rf {} + 2>/dev/null || 
 rm -rf prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 \
        hardware/qcom-caf/sm8150/display \
        device/xiaomi/violet \
+       kernel/xiaomi/violet \
        .repo/local_manifests 2>/dev/null || true
 
 run_step "Initializing Repository" repo init -u "${REPO_MANIFEST_URL}" -b "${REPO_MANIFEST_BRANCH}" --git-lfs --depth=1
@@ -149,15 +150,39 @@ rm -rf hardware/xiaomi/packages/DSPVolumeSynchronizer
 
 
 
-if [ ! -f "device/xiaomi/violet/lineage_violet.mk" ]; then
-    echo ">> Critical device tree missing! Refreshing device and display trees..."
-    
-    rm -rf device/xiaomi/violet
-    git clone https://github.com/Justadeayo/device_xiaomi_violet.git -b 17 device/xiaomi/violet
 
-    rm -rf hardware/qcom-caf/sm8150/display
-    git clone https://github.com/Justadeayo/android_hardware_qcom_display.git -b lineage-24.0-caf-sm8150 hardware/qcom-caf/sm8150/display
+
+
+# ==============================================================================
+# DEVICE TREE INTEGRITY CHECK
+# ==============================================================================
+DEVICE_TREE_DIR="device/xiaomi/violet"
+
+if [ ! -f "${DEVICE_TREE_DIR}/lineage_violet.mk" ]; then
+    echo "--> Device tree missing or invalid. Cloning started.."
+    rm -rf "${DEVICE_TREE_DIR}"
+    git clone --depth=1 https://github.com/Justadeayo/device_xiaomi_violet -b 17 "${DEVICE_TREE_DIR}"
+else
+    echo "✅ Device tree check passed."
 fi
+
+# ==============================================================================
+# DISPLAY CAF HAL INTEGRITY CHECK
+# ==============================================================================
+DISPLAY_HAL_DIR="hardware/qcom-caf/sm8150/display"
+
+if ! grep -q "generated_kernel_headers" "${DISPLAY_HAL_DIR}/Android.bp" 2>/dev/null; then
+    echo "--> Display HAL missing or invalid. Cloning custom fork..."
+    rm -rf "${DISPLAY_HAL_DIR}"
+    git clone --depth=1 https://github.com/Justadeayo/android_hardware_qcom_display -b lineage-24.0-caf-sm8150 "${DISPLAY_HAL_DIR}"
+else
+    echo "✅ Display HAL check passed."
+fi
+
+
+# When I remove rm -rf for device, kernel. and hardware_display from the top, I'll also delete this lines. However, it's only a check but not necessary since /opt/crave/resync.sh would have taken care of it gracefully.
+
+
 
 
 
@@ -291,6 +316,7 @@ done
 mkdir -p "${DISPLAY_INC}/linux"
 cp -f "${KERNEL_UAPI}"/linux/msm_*.h "${KERNEL_UAPI}"/linux/mdss*.h "${DISPLAY_INC}/linux/" 2>/dev/null || true
 
+# Already fixed in Kernel Tree, but I want it to run at least once so incase my fix didn't work, it's generated into necessary directory. Then I can remove the line completely. 
 
 
 
@@ -350,7 +376,6 @@ export TZ="Africa/Lagos"
 export LC_ALL="C.UTF-8"
 export R8_MAX_HEAP_SIZE=2048M
 export BUILD_BROKEN_MISSING_REQUIRED_MODULES=true
-export INLINE_KERNEL_BUILDING=true
 
 m derp
 
