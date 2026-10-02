@@ -300,21 +300,21 @@ fi
 # ==============================================================================
 # 1c. KERNEL UAPI HEADER SYNC
 # ==============================================================================
-KERNEL_UAPI="kernel/xiaomi/violet/include/uapi"
-DISPLAY_INC="hardware/qcom-caf/sm8150/display/include"
-mkdir -p "${DISPLAY_INC}/drm" "${DISPLAY_INC}/media"
-cp -f "${KERNEL_UAPI}"/drm/sde_*.h "${KERNEL_UAPI}"/drm/msm_*.h "${DISPLAY_INC}/drm/" 2>/dev/null || true
-cp -f "${KERNEL_UAPI}"/media/*.h "${DISPLAY_INC}/media/" 2>/dev/null || true
-for h in drm/sde_drm.h drm/msm_drm_pp.h media/msm_media_info.h; do
-  if [ -f "${DISPLAY_INC}/${h}" ]; then
-    echo "Synced ${h}"
-  else
-    echo "WARNING: ${h} missing after sync"
-  fi
-done
+# KERNEL_UAPI="kernel/xiaomi/violet/include/uapi"
+# DISPLAY_INC="hardware/qcom-caf/sm8150/display/include"
+# mkdir -p "${DISPLAY_INC}/drm" "${DISPLAY_INC}/media"
+# cp -f "${KERNEL_UAPI}"/drm/sde_*.h "${KERNEL_UAPI}"/drm/msm_*.h "${DISPLAY_INC}/drm/" 2>/dev/null || true
+# cp -f "${KERNEL_UAPI}"/media/*.h "${DISPLAY_INC}/media/" 2>/dev/null || true
+# for h in drm/sde_drm.h drm/msm_drm_pp.h media/msm_media_info.h; do
+#   if [ -f "${DISPLAY_INC}/${h}" ]; then
+#     echo "Synced ${h}"
+#   else
+#     echo "WARNING: ${h} missing after sync"
+#   fi
+# done
 
-mkdir -p "${DISPLAY_INC}/linux"
-cp -f "${KERNEL_UAPI}"/linux/msm_*.h "${KERNEL_UAPI}"/linux/mdss*.h "${DISPLAY_INC}/linux/" 2>/dev/null || true
+# mkdir -p "${DISPLAY_INC}/linux"
+# cp -f "${KERNEL_UAPI}"/linux/msm_*.h "${KERNEL_UAPI}"/linux/mdss*.h "${DISPLAY_INC}/linux/" 2>/dev/null || true
 
 # Already fixed in Kernel Tree, but I want it to run at least once so incase my fix didn't work, it's generated into necessary directory. Then I can remove the line completely. 
 
