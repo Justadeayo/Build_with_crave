@@ -312,26 +312,6 @@ if [ "$(cat .kernel_headers_rev 2>/dev/null)" != "$H" ]; then
   echo "$H" > .kernel_headers_rev
 fi
 
-echo "===================================="
-echo "--> Check for GCC"
-echo "===================================="
-
-GCC_BIN="$(command -v gcc || true)"; GXX_BIN="$(command -v g++ || true)"
-echo "--> host gcc: ${GCC_BIN:-NOT FOUND}"
-if [ -n "${GCC_BIN}" ] && ! grep -q "HOSTCC=" device/xiaomi/violet/BoardConfig.mk; then
-  printf '\nKERNEL_MAKE_FLAGS += HOSTCC=%s HOSTCXX=%s\n' "${GCC_BIN}" "${GXX_BIN}" >> device/xiaomi/violet/BoardConfig.mk
-fi
-grep -rn "KERNEL_MAKE_FLAGS\|PATH_OVERRIDE_SOONG\|HOSTCC" vendor/lineage/build/tasks/kernel.mk build/make/core/tasks/kernel.mk 2>/dev/null | head -30
-
-
-[ -n "${GCC_BIN}" ] && [ -n "${GXX_BIN}" ] && sed -i -E "s|^(HOSTCC[[:space:]]*=[[:space:]]*)gcc[[:space:]]*\$|\1${GCC_BIN}|; s|^(HOSTCXX[[:space:]]*=[[:space:]]*)g\+\+[[:space:]]*\$|\1${GXX_BIN}|" kernel/xiaomi/violet/Makefile || true
-grep -n '^HOSTCC\|^HOSTCXX' kernel/xiaomi/violet/Makefile || true
-
-echo "==================================="
-echo "PREBUILT_KERNEL_HEADERS_CHECK"
-echo "==================================="
-
-grep -rn "PREBUILT_KERNEL_HEADERS" vendor/lineage build/make/core 2>/dev/null | head -15
 
 
 
