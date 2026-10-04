@@ -132,6 +132,7 @@ find .repo/projects -type d -name hooks -exec rm -rf {} + 2>/dev/null || true
 find .repo/project-objects -type d -name hooks -exec rm -rf {} + 2>/dev/null || true
 
 rm -rf prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 \
+       hardware/qcom-caf/common \
        hardware/qcom-caf/sm8150/display \
        .repo/local_manifests 2>/dev/null || true
 
@@ -180,12 +181,19 @@ else
     echo "✅ Display HAL check passed."
 fi
 
+# ==============================================================================
+# COMMON CAF FORK INTEGRITY CHECK
+# ==============================================================================
+COMMON_CAF_DIR="hardware/qcom-caf/common"
 
-
-
-
-
-
+if [ ! -s "${COMMON_CAF_DIR}/kernel-headers/linux/msm_ipa.h" ] \
+   || ! grep -q 'export_include_dirs: \["kernel-headers"\]' "${COMMON_CAF_DIR}/Android.bp" 2>/dev/null; then
+    echo "--> Common CAF fork missing or invalid. Cloning custom fork..."
+    rm -rf "${COMMON_CAF_DIR}"
+    git clone --depth=1 https://github.com/Justadeayo/android_hardware_qcom-caf_common -b lineage-24.0 "${COMMON_CAF_DIR}"
+else
+    echo "✅ Common HAL check passed."
+fi
 
 # ==============================================================================
 # 1b. CLANG GUARD (fixes "Unable to find libclang" in libbinder_ndk_bindgen)
@@ -304,6 +312,28 @@ if [ "$(cat .kernel_headers_rev 2>/dev/null)" != "$H" ]; then
   echo "$H" > .kernel_headers_rev
 fi
 
+echo "===================================="
+echo "--> Check for GCC"
+echo "===================================="
+
+GCC_BIN="$(command -v gcc || true)"; GXX_BIN="$(command -v g++ || true)"
+echo "--> host gcc: ${GCC_BIN:-NOT FOUND}"
+if [ -n "${GCC_BIN}" ] && ! grep -q "HOSTCC=" device/xiaomi/violet/BoardConfig.mk; then
+  printf '\nKERNEL_MAKE_FLAGS += HOSTCC=%s HOSTCXX=%s\n' "${GCC_BIN}" "${GXX_BIN}" >> device/xiaomi/violet/BoardConfig.mk
+fi
+grep -rn "KERNEL_MAKE_FLAGS\|PATH_OVERRIDE_SOONG\|HOSTCC" vendor/lineage/build/tasks/kernel.mk build/make/core/tasks/kernel.mk 2>/dev/null | head -30
+
+
+[ -n "${GCC_BIN}" ] && [ -n "${GXX_BIN}" ] && sed -i -E "s|^(HOSTCC[[:space:]]*=[[:space:]]*)gcc[[:space:]]*\$|\1${GCC_BIN}|; s|^(HOSTCXX[[:space:]]*=[[:space:]]*)g\+\+[[:space:]]*\$|\1${GXX_BIN}|" kernel/xiaomi/violet/Makefile || true
+grep -n '^HOSTCC\|^HOSTCXX' kernel/xiaomi/violet/Makefile || true
+
+echo "==================================="
+echo "PREBUILT_KERNEL_HEADERS_CHECK"
+echo "==================================="
+
+grep -rn "PREBUILT_KERNEL_HEADERS" vendor/lineage build/make/core 2>/dev/null | head -15
+
+
 
 
 
@@ -347,6 +377,20 @@ echo "--> Setting up build environment..."
 . build/envsetup.sh
 
 lunch "lineage_${DEVICE}-cp2a-user"
+
+
+G=out/soong/.intermediates/vendor/lineage/build/soong/generated_kernel_includes
+rm -rf "$G"
+m generated_kernel_includes 2>&1 | tail -15 || true
+echo "--> flag in manifest: $(grep -o 'HOSTCC=[^ ]*' "$G/generator.sbox.textproto" 2>/dev/null | head -1)"
+if find "$G/gen" -name msm_ipa.h -size +0 2>/dev/null | grep -q .; then
+  echo "✅ Kernel headers generated."
+else
+  echo "❌ Kernel headers NOT generated. Generator log:"
+  zcat out/verbose.log.gz 2>/dev/null | grep -A25 "Entering directory.*generated_kernel_includes/gen" | cut -c1-200 | head -40
+  tg_send "❌ Kernel headers not generated, find a reliable way to fix it"
+fi
+
 
 make installclean
 
