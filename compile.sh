@@ -73,9 +73,14 @@ get_wat_time() {
 cleanup() {
   local exit_code=$?
 
- echo "--> Generated kernel header check:"
-  find out/soong/.intermediates/vendor/lineage/build/soong/generated_kernel_includes/gen \
-    \( -name videodev2.h -o -name drm_mode.h -o -name sde_drm.h -o -name msm_drm_pp.h -o -name msm_media_info.h -o -name drm_fourcc.h \) 2>/dev/null || true
+   G=out/soong/.intermediates/vendor/lineage/build/soong/generated_kernel_includes
+  echo "--> Generated kernel header check:"
+  echo "    msm_ipa.h:    $(find "$G" -name msm_ipa.h -size +0 2>/dev/null | head -1)"
+  echo "    videodev2.h:  $(find "$G" -name videodev2.h -size +0 2>/dev/null | head -1)"
+  echo "    header files: $(find "$G" -name '*.h' 2>/dev/null | wc -l)"
+  echo "    gcc/clang not found in log: $(zcat out/verbose.log.gz 2>/dev/null | grep -c -E '(gcc|clang): (not found|error)' || true)"
+  zcat out/verbose.log.gz 2>/dev/null | grep -m1 -A25 'Entering directory.*generated_kernel_includes/gen' | cut -c1-200 | head -40 || true
+  
   if [ "$exit_code" -ne 0 ]; then
     echo "❌ Script aborted with exit code ${exit_code}."
     tg_send "🚨 *Build Failed!*
@@ -126,20 +131,37 @@ tg_send "🚀 *Build Started!*
 echo "--> Wiping local git changes across all repos (edits AND untracked files)..."
 repo forall -j"${JOBS}" -c 'if [ -n "$(git status --porcelain 2>/dev/null)" ]; then git reset --hard HEAD && git clean -fdx; fi' 2>/dev/null || true
 
+
+
+
 echo "--> Cleaning up workspace lockfiles, local manifest paths, and conflicting hooks..."
 find .repo/ -name "*.lock" -delete 2>/dev/null || true
 find .repo/projects -type d -name hooks -exec rm -rf {} + 2>/dev/null || true
 find .repo/project-objects -type d -name hooks -exec rm -rf {} + 2>/dev/null || true
 
+
+
+
 rm -rf prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 \
        hardware/qcom-caf/common \
        hardware/qcom-caf/sm8150/display \
+       device/xiaomi/violet \
+       kernel/xiaomi/violet \
        .repo/local_manifests 2>/dev/null || true
+
+
+
 
 run_step "Initializing Repository" repo init -u "${REPO_MANIFEST_URL}" -b "${REPO_MANIFEST_BRANCH}" --git-lfs --depth=1
 
+
+
+
 echo "--> Fetching local device manifests..."
 git clone --depth=1 -b "${MANIFEST_LOCAL_BRANCH}" "${MANIFEST_LOCAL_REPO}" .repo/local_manifests || true
+
+
+
 
 if [ -f /opt/crave/resync.sh ]; then
   echo "--> Resyncing Sources via Crave..."
@@ -147,6 +169,8 @@ if [ -f /opt/crave/resync.sh ]; then
 else
   run_step "Syncing Sources" repo sync -c --force-sync --force-remove-dirty --no-tags --no-clone-bundle --prune -j"${JOBS}"
 fi
+
+
 
 rm -rf hardware/xiaomi/packages/DSPVolumeSynchronizer
 
@@ -232,6 +256,10 @@ clang_ok() {
   return 0
 }
 
+
+
+
+
 repair_clang() {
   local prj="$1" name="$2" tag="$3" dir="$4"
 
@@ -250,6 +278,11 @@ repair_clang() {
 
   return 1
 }
+
+
+
+
+
 
 ensure_clang() {
   local prj="$1" name="$2" tag="$3" dir="${1}/${2}"
@@ -280,8 +313,13 @@ ${diff_log}
   tg_send "✅ ${name} repaired by repair ${CLANG_FIXED_BY}." || true
 }
 
+
+
+
 ensure_clang "${CLANG_PRJ}" "clang-r584948" "${CLANG_TAG}"
 ensure_clang "${CLANG_PRJ}" "clang-r596125" "${CLANG_TAG}"
+
+
 
 
 
@@ -302,6 +340,8 @@ if [ -n "$(missing_tools)" ]; then
     echo "⚠️ Still missing: $(missing_tools) — the inline kernel build will fail."
   fi
 fi
+
+
 
 
 K=kernel/xiaomi/violet
@@ -358,20 +398,6 @@ echo "--> Setting up build environment..."
 
 lunch "lineage_${DEVICE}-cp2a-user"
 
-
-G=out/soong/.intermediates/vendor/lineage/build/soong/generated_kernel_includes
-rm -rf "$G"
-m generated_kernel_includes 2>&1 | tail -15 || true
-echo "--> flag in manifest: $(grep -o 'HOSTCC=[^ ]*' "$G/generator.sbox.textproto" 2>/dev/null | head -1)"
-if find "$G/gen" -name msm_ipa.h -size +0 2>/dev/null | grep -q .; then
-  echo "✅ Kernel headers generated."
-else
-  echo "❌ Kernel headers NOT generated. Generator log:"
-  zcat out/verbose.log.gz 2>/dev/null | grep -A25 "Entering directory.*generated_kernel_includes/gen" | cut -c1-200 | head -40
-  tg_send "❌ Kernel headers not generated, find a reliable way to fix it"
-fi
-
-
 make installclean
 
 echo "--> Starting compilation..."
@@ -382,9 +408,6 @@ export R8_MAX_HEAP_SIZE=2048M
 export BUILD_BROKEN_MISSING_REQUIRED_MODULES=true
 export INLINE_KERNEL_BUILDING=true
 
-# ==============================================================================
-# 3b. KERNEL COMMIT CHECK
-# ==============================================================================
 git -C kernel/xiaomi/violet log -1 --oneline || true
 
 tg_send "🛠️ *Compilation Started* (m derp)
