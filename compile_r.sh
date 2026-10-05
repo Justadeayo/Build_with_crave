@@ -4,47 +4,19 @@ set -e
 export TZ="Africa/Lagos"
 
 # ==============================================================================
-# DEPENDENCY CHECK (auto-install where possible)
+# DEPENDENCY CHECK
 # ==============================================================================
-check_and_install_deps() {
-  local missing=()
-  for dep in "$@"; do
-    command -v "$dep" >/dev/null 2>&1 || missing+=("$dep")
-  done
-  [ "${#missing[@]}" -eq 0 ] && return 0
 
-  echo "⚠️ Missing dependencies: ${missing[*]} — attempting install..."
-
-  if command -v pkg >/dev/null 2>&1; then
-    pkg install -y "${missing[@]}" || true
-  elif command -v apt-get >/dev/null 2>&1; then
-    if [ "$(id -u)" -eq 0 ]; then
-      apt-get update -qq && apt-get install -y "${missing[@]}" || true
-    else
-      sudo apt-get update -qq && sudo apt-get install -y "${missing[@]}" || true
-    fi
-  else
-    echo "❌ No known package manager (pkg/apt-get) found — install manually: ${missing[*]}"
-    exit 1
-  fi
-
-  local still_missing=()
-  for dep in "${missing[@]}"; do
-    command -v "$dep" >/dev/null 2>&1 || still_missing+=("$dep")
-  done
-  if [ "${#still_missing[@]}" -gt 0 ]; then
-    echo "❌ Still missing after install attempt: ${still_missing[*]} — install manually and re-run."
-    exit 1
-  fi
-  echo "✅ Installed: ${missing[*]}"
-}
-
-check_and_install_deps curl jq openssl git rclone
+for tool in curl jq openssl git rclone bc flex bison rsync zip unzip; do
+  command -v "$tool" >/dev/null 2>&1 || echo "⚠️ Warning: $tool is not installed"
+done
 
 if ! command -v repo >/dev/null 2>&1; then
   echo "⚠️ 'repo' not found on PATH — expected to be preinstalled in the Crave build image."
-  echo "   If this isn't Crave, install it manually before continuing."
+  echo "If this isn't Crave, install it manually before continuing."
+  echo "But this Crave, you don't have a choice 😉"
 fi
+
 
 
 
@@ -79,7 +51,7 @@ export BUILD_HOSTNAME="${BUILD_HOSTNAME:-crave}"
 REPO_MANIFEST_URL="https://github.com/DerpFest-AOSP/android_manifest"
 REPO_MANIFEST_BRANCH="17"
 MANIFEST_LOCAL_REPO="https://github.com/Justadeayo/Manifest.git"
-MANIFEST_LOCAL_BRANCH="16"
+MANIFEST_LOCAL_BRANCH="main"
 
 OUT_DIR="out/target/product/${DEVICE}"
 GOFILE_RETRY_MAX=8
@@ -101,6 +73,14 @@ get_wat_time() {
 cleanup() {
   local exit_code=$?
 
+   G=out/soong/.intermediates/vendor/lineage/build/soong/generated_kernel_includes
+  echo "--> Generated kernel header check:"
+  echo "    msm_ipa.h:    $(find "$G" -name msm_ipa.h -size +0 2>/dev/null | head -1)"
+  echo "    videodev2.h:  $(find "$G" -name videodev2.h -size +0 2>/dev/null | head -1)"
+  echo "    header files: $(find "$G" -name '*.h' 2>/dev/null | wc -l)"
+  echo "    gcc/clang not found in log: $(zcat out/verbose.log.gz 2>/dev/null | grep -c -E '(gcc|clang): (not found|error)' || true)"
+  zcat out/verbose.log.gz 2>/dev/null | grep -m1 -A25 'Entering directory.*generated_kernel_includes/gen' | cut -c1-200 | head -40 || true
+  
   if [ "$exit_code" -ne 0 ]; then
     echo "❌ Script aborted with exit code ${exit_code}."
     tg_send "🚨 *Build Failed!*
@@ -151,23 +131,37 @@ tg_send "🚀 *Build Started!*
 echo "--> Wiping local git changes across all repos (edits AND untracked files)..."
 repo forall -j"${JOBS}" -c 'if [ -n "$(git status --porcelain 2>/dev/null)" ]; then git reset --hard HEAD && git clean -fdx; fi' 2>/dev/null || true
 
+
+
+
 echo "--> Cleaning up workspace lockfiles, local manifest paths, and conflicting hooks..."
 find .repo/ -name "*.lock" -delete 2>/dev/null || true
 find .repo/projects -type d -name hooks -exec rm -rf {} + 2>/dev/null || true
+find .repo/project-objects -type d -name hooks -exec rm -rf {} + 2>/dev/null || true
+
+
+
 
 rm -rf prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 \
-       vendor/MiuiCamera \
+       hardware/qcom-caf/common \
+       hardware/qcom-caf/sm8150/display \
        device/xiaomi/violet \
        kernel/xiaomi/violet \
-       vendor/xiaomi/violet \
-       hardware/xiaomi \
-       hardware/dolby \
        .repo/local_manifests 2>/dev/null || true
+
+
+
 
 run_step "Initializing Repository" repo init -u "${REPO_MANIFEST_URL}" -b "${REPO_MANIFEST_BRANCH}" --git-lfs --depth=1
 
+
+
+
 echo "--> Fetching local device manifests..."
 git clone --depth=1 -b "${MANIFEST_LOCAL_BRANCH}" "${MANIFEST_LOCAL_REPO}" .repo/local_manifests || true
+
+
+
 
 if [ -f /opt/crave/resync.sh ]; then
   echo "--> Resyncing Sources via Crave..."
@@ -178,6 +172,52 @@ fi
 
 
 
+rm -rf hardware/xiaomi/packages/DSPVolumeSynchronizer
+
+
+
+
+
+
+# ==============================================================================
+# DEVICE TREE INTEGRITY CHECK
+# ==============================================================================
+DEVICE_TREE_DIR="device/xiaomi/violet"
+
+if [ ! -f "${DEVICE_TREE_DIR}/lineage_violet.mk" ]; then
+    echo "--> Device tree missing or invalid. Cloning started.."
+    rm -rf "${DEVICE_TREE_DIR}"
+    git clone --depth=1 https://github.com/Justadeayo/device_xiaomi_violet -b 17 "${DEVICE_TREE_DIR}"
+else
+    echo "✅ Device tree check passed."
+fi
+
+# ==============================================================================
+# DISPLAY CAF HAL INTEGRITY CHECK
+# ==============================================================================
+DISPLAY_HAL_DIR="hardware/qcom-caf/sm8150/display"
+
+if ! grep -q "generated_kernel_headers" "${DISPLAY_HAL_DIR}/Android.bp" 2>/dev/null \
+   || [ ! -f "${DISPLAY_HAL_DIR}/include/linux/videodev2.h" ]; then    echo "--> Display HAL missing or invalid. Cloning custom fork..."
+    rm -rf "${DISPLAY_HAL_DIR}"
+    git clone --depth=1 https://github.com/Justadeayo/android_hardware_qcom_display -b lineage-24.0-caf-sm8150 "${DISPLAY_HAL_DIR}"
+else
+    echo "✅ Display HAL check passed."
+fi
+
+# ==============================================================================
+# COMMON CAF FORK INTEGRITY CHECK
+# ==============================================================================
+COMMON_CAF_DIR="hardware/qcom-caf/common"
+
+if [ ! -s "${COMMON_CAF_DIR}/kernel-headers/linux/msm_ipa.h" ] \
+   || ! grep -q 'export_include_dirs: \["kernel-headers"\]' "${COMMON_CAF_DIR}/Android.bp" 2>/dev/null; then
+    echo "--> Common CAF fork missing or invalid. Cloning custom fork..."
+    rm -rf "${COMMON_CAF_DIR}"
+    git clone --depth=1 https://github.com/Justadeayo/android_hardware_qcom-caf_common -b lineage-24.0 "${COMMON_CAF_DIR}"
+else
+    echo "✅ Common HAL check passed."
+fi
 
 # ==============================================================================
 # 1b. CLANG GUARD (fixes "Unable to find libclang" in libbinder_ndk_bindgen)
@@ -216,6 +256,10 @@ clang_ok() {
   return 0
 }
 
+
+
+
+
 repair_clang() {
   local prj="$1" name="$2" tag="$3" dir="$4"
 
@@ -234,6 +278,11 @@ repair_clang() {
 
   return 1
 }
+
+
+
+
+
 
 ensure_clang() {
   local prj="$1" name="$2" tag="$3" dir="${1}/${2}"
@@ -264,8 +313,13 @@ ${diff_log}
   tg_send "✅ ${name} repaired by repair ${CLANG_FIXED_BY}." || true
 }
 
+
+
+
 ensure_clang "${CLANG_PRJ}" "clang-r584948" "${CLANG_TAG}"
 ensure_clang "${CLANG_PRJ}" "clang-r596125" "${CLANG_TAG}"
+
+
 
 
 
@@ -290,95 +344,24 @@ fi
 
 
 
-
-# ==============================================================================
-# 2. HARDWARE TREES
-# ==============================================================================
-echo "--> Fetching custom hardware repos..."
-rm -rf hardware/xiaomi
-run_step "Cloning Xiaomi Hardware" git clone https://github.com/Evolution-X-Devices/hardware_xiaomi -b bka-no-dolby hardware/xiaomi
-rm -rf hardware/xiaomi/packages/DSPVolumeSynchronizer
-
-rm -rf hardware/dolby
-run_step "Cloning Dolby Hardware" git clone https://github.com/adi8900/hardware_dolby -b lunaris hardware/dolby
-echo "✅ Hardware paths configured!"
-
-echo "--> Ensuring kernel-specific clang (r416183b) is available and working..."
-KERNEL_CLANG_DIR="prebuilts/clang/host/linux-x86/clang-r416183b"
-KERNEL_CLANG_WHY=""
-KERNEL_CLANG_FIXED_BY=""
-KERNEL_CLANG_AOSP_COMMIT="8fd13dca1a6dfbc43fc54b2408d49199981c387b"
-
-kernel_clang_ok() {
-  KERNEL_CLANG_WHY=""
-  if [ ! -x "${KERNEL_CLANG_DIR}/bin/clang" ]; then
-    KERNEL_CLANG_WHY="bin/clang missing or not executable"; return 1
-  fi
-
-  local log rc out
-  log=$(mktemp)
-  exec 9>&2; exec 2>/dev/null
-  LD_LIBRARY_PATH="${KERNEL_CLANG_DIR}/lib64:${LD_LIBRARY_PATH:-}" \
-    "${KERNEL_CLANG_DIR}/bin/clang" --target=aarch64-linux-gnu \
-    -fstack-protector-strong -Werror \
-    -Wno-error=unused-command-line-argument -Wno-unused-command-line-argument \
-    -c -x c /dev/null -o /dev/null \
-    >"${log}" 2>&1
-  rc=$?
-  exec 2>&9 9>&-
-  if [ "${rc}" -ne 0 ]; then
-    out="$(cat "${log}")"
-    KERNEL_CLANG_WHY="self-test compile failed (exit ${rc}): ${out:-no output, likely crashed}"
-    rm -f "${log}"
-    return 1
-  fi
-  rm -f "${log}"
-  return 0
-}
-
-repair_kernel_clang() {
-  echo "--> Repair 1/2: re-cloning kernel clang-r416183b from LineageOS (GitHub)..."
-  rm -rf "${KERNEL_CLANG_DIR}"
-  git clone --depth=1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git "${KERNEL_CLANG_DIR}"
-  if kernel_clang_ok; then KERNEL_CLANG_FIXED_BY="1/2 (LineageOS re-clone)"; return 0; fi
-
-  echo "--> Repair 2/2: downloading clang-r416183b straight from Google (AOSP prebuilts history)..."
-  rm -rf "${KERNEL_CLANG_DIR}"
-  mkdir -p "${KERNEL_CLANG_DIR}"
-  curl -fsSL --retry 3 -o kernel-clang.tgz \
-    "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/${KERNEL_CLANG_AOSP_COMMIT}/clang-r416183b.tar.gz" \
-    && tar -xzf kernel-clang.tgz -C "${KERNEL_CLANG_DIR}" || true
-  rm -f kernel-clang.tgz
-  if kernel_clang_ok; then KERNEL_CLANG_FIXED_BY="2/2 (Google AOSP download)"; return 0; fi
-
-  return 1
-}
-
-if kernel_clang_ok; then
-  echo "✅ Kernel clang-r416183b is present and passes its compile self-test."
-else
-  echo "⚠️ Kernel clang-r416183b problem: ${KERNEL_CLANG_WHY}"
-  tg_send "⚠️ *Kernel clang-r416183b problem*: ${KERNEL_CLANG_WHY}
-Repairing before build..." || true
-  if ! repair_kernel_clang; then
-    echo "❌ Kernel clang-r416183b still broken after both repairs (${KERNEL_CLANG_WHY}); stopping now."
-    tg_send "❌ Kernel clang-r416183b still broken after both repairs: ${KERNEL_CLANG_WHY}" || true
-    exit 1
-  fi
-  echo "✅ Kernel clang-r416183b repaired by repair ${KERNEL_CLANG_FIXED_BY}."
-  tg_send "✅ Kernel clang-r416183b repaired by repair ${KERNEL_CLANG_FIXED_BY}." || true
+K=kernel/xiaomi/violet
+H=$(git -C $K rev-parse HEAD)
+if [ "$(cat .kernel_headers_rev 2>/dev/null)" != "$H" ]; then
+  rm -rf out/soong/.intermediates/vendor/lineage/build/soong/generated_kernel_includes
+  rm -rf "${OUT_DIR}/obj/KERNEL_OBJ"
+  echo "$H" > .kernel_headers_rev
 fi
-file "${KERNEL_CLANG_DIR}/bin/clang"
+
+
 
 
 
 
 # ==============================================================================
-# 3. VERIFICATION ASSETS SETUP (LOCAL PERSISTENT KEYS)
+# 2. VERIFICATION ASSETS SETUP (LOCAL PERSISTENT KEYS)
 # ==============================================================================
 echo "--> Verifying persistent signing assets..."
 
-# Standardize directory structure if nested folders exists
 for CANDIDATE in my-signing-keys my_signing_keys my_private_keys; do
   if [ -d "vendor/lineage-priv/keys/${CANDIDATE}" ]; then
     mv vendor/lineage-priv/keys/"${CANDIDATE}"/* vendor/lineage-priv/keys/ 2>/dev/null || true
@@ -407,26 +390,28 @@ fi
 
 
 # ==============================================================================
-# 4. BUILD COMPILATION (FORCE WAT TIMESTAMPS & CP2A TARGET)
+# 3. BUILD COMPILATION (FORCE WAT TIMESTAMPS & CP2A TARGET)
 # ==============================================================================
 echo "--> Setting up build environment..."
 
 . build/envsetup.sh
-
-rm -rf "${OUT_DIR}/obj/KERNEL_OBJ"
 
 lunch "lineage_${DEVICE}-cp2a-user"
 
 make installclean
 
 echo "--> Starting compilation..."
-tg_send "🛠️ *Compilation Started* (m derp)
-⏰ $(get_wat_time)"
 
 export TZ="Africa/Lagos"
 export LC_ALL="C.UTF-8"
 export R8_MAX_HEAP_SIZE=2048M
 export BUILD_BROKEN_MISSING_REQUIRED_MODULES=true
+export INLINE_KERNEL_BUILDING=true
+
+git -C kernel/xiaomi/violet log -1 --oneline || true
+
+tg_send "🛠️ *Compilation Started* (m derp)
+⏰ $(get_wat_time)"
 
 m derp
 
@@ -447,7 +432,7 @@ tg_send "🛠️ *Compilation Finished*
 
 
 # ==============================================================================
-# 5. DYNAMIC ARTIFACT DISPATCHER (GOFILE)
+# 4. DYNAMIC ARTIFACT DISPATCHER (GOFILE)
 # ==============================================================================
 gofile_upload() {
   local FILE="$1"
@@ -481,7 +466,7 @@ gofile_upload() {
 
 
 # ==============================================================================
-# 5b. GOOGLE DRIVE DISPATCHER (rclone)
+# 4b. GOOGLE DRIVE DISPATCHER (rclone)
 # ==============================================================================
 GDRIVE_REMOTE_NAME="${GDRIVE_REMOTE%%:*}"
 GDRIVE_READY=0
@@ -524,7 +509,7 @@ gdrive_upload() {
 
 
 # ==============================================================================
-# 6. ARTIFACT HANDLING & DISPATCH NOTIFICATION
+# 5. ARTIFACT HANDLING & DISPATCH NOTIFICATION
 # ==============================================================================
 echo "--> Processing build artifacts..."
 

@@ -45,8 +45,6 @@ tg_send() {
 export ROM_NAME="${ROM_NAME:-DerpFest}"
 export DEVICE="${DEVICE:-violet}"
 export BUILD_TYPE="${BUILD_TYPE:-user}"
-export BUILD_USERNAME="${BUILD_USERNAME:-Justus26}"
-export BUILD_HOSTNAME="${BUILD_HOSTNAME:-crave}"
 
 REPO_MANIFEST_URL="https://github.com/DerpFest-AOSP/android_manifest"
 REPO_MANIFEST_BRANCH="17"
@@ -145,8 +143,6 @@ find .repo/project-objects -type d -name hooks -exec rm -rf {} + 2>/dev/null || 
 rm -rf prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 \
        hardware/qcom-caf/common \
        hardware/qcom-caf/sm8150/display \
-       device/xiaomi/violet \
-       kernel/xiaomi/violet \
        .repo/local_manifests 2>/dev/null || true
 
 
@@ -205,19 +201,11 @@ else
     echo "✅ Display HAL check passed."
 fi
 
-# ==============================================================================
-# COMMON CAF FORK INTEGRITY CHECK
-# ==============================================================================
-COMMON_CAF_DIR="hardware/qcom-caf/common"
 
-if [ ! -s "${COMMON_CAF_DIR}/kernel-headers/linux/msm_ipa.h" ] \
-   || ! grep -q 'export_include_dirs: \["kernel-headers"\]' "${COMMON_CAF_DIR}/Android.bp" 2>/dev/null; then
-    echo "--> Common CAF fork missing or invalid. Cloning custom fork..."
-    rm -rf "${COMMON_CAF_DIR}"
-    git clone --depth=1 https://github.com/Justadeayo/android_hardware_qcom-caf_common -b lineage-24.0 "${COMMON_CAF_DIR}"
-else
-    echo "✅ Common HAL check passed."
-fi
+
+
+
+
 
 # ==============================================================================
 # 1b. CLANG GUARD (fixes "Unable to find libclang" in libbinder_ndk_bindgen)
@@ -407,6 +395,9 @@ export LC_ALL="C.UTF-8"
 export R8_MAX_HEAP_SIZE=2048M
 export BUILD_BROKEN_MISSING_REQUIRED_MODULES=true
 export INLINE_KERNEL_BUILDING=true
+export BUILD_USERNAME="${BUILD_USERNAME:-Justus26}"
+export BUILD_HOSTNAME="${BUILD_HOSTNAME:-crave}"
+
 
 git -C kernel/xiaomi/violet log -1 --oneline || true
 
