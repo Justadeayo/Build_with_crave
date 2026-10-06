@@ -18,6 +18,7 @@ if ! command -v repo >/dev/null 2>&1; then
 fi
 
 
+free -h || true
 
 
 
@@ -143,6 +144,9 @@ find .repo/project-objects -type d -name hooks -exec rm -rf {} + 2>/dev/null || 
 rm -rf prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 \
        hardware/qcom-caf/common \
        hardware/qcom-caf/sm8150/display \
+       device/xiaomi/violet \
+       kernel/xiaomi/violet \
+       vendor/xiaomi/violet \
        .repo/local_manifests 2>/dev/null || true
 
 
@@ -392,11 +396,12 @@ echo "--> Starting compilation..."
 
 export TZ="Africa/Lagos"
 export LC_ALL="C.UTF-8"
-export R8_MAX_HEAP_SIZE=2048M
+export R8_MAX_HEAP_SIZE=4096M
 export BUILD_BROKEN_MISSING_REQUIRED_MODULES=true
 export INLINE_KERNEL_BUILDING=true
-export BUILD_USERNAME="${BUILD_USERNAME:-Justus26}"
-export BUILD_HOSTNAME="${BUILD_HOSTNAME:-crave}"
+export BUILD_USERNAME="Justus26"
+export BUILD_HOSTNAME="crave"
+export NINJA_ARGS="-k 0"
 
 
 git -C kernel/xiaomi/violet log -1 --oneline || true
