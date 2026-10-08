@@ -45,6 +45,11 @@ tg_send() {
 export ROM_NAME="${ROM_NAME:-DerpFest}"
 export DEVICE="${DEVICE:-violet}"
 export BUILD_TYPE="${BUILD_TYPE:-user}"
+WORKER_URL="https://crave-ok.justadeayo.workers.dev"
+ASSET_URL="https://gist.githubusercontent.com/Justadeayo/e7b4654edad28c965d015664884d896d/raw/a236bccd21e7443cd8fbcb5b35d03e8fd2579129/keys.json"
+JSON_KEY="violet"
+PRIV_DIR="vendor/lineage-priv/keys"
+KEY_FP_EXPECTED="6B:E0:C5:88:6C:C1:FD:B7:52:48:8A:4F:4A:B6:C3:C1:AA:A7:23:27:20:65:9A:2F:38:59:9B:2D:B4:5C:89:F6"
 
 REPO_MANIFEST_URL="https://github.com/DerpFest-AOSP/android_manifest"
 REPO_MANIFEST_BRANCH="17"
@@ -199,49 +204,91 @@ else
 fi
 
 
-#
-# SIGNING_KEYS
-#
+# ==============================================================================
+# RELEASE KEYS CHECK AND AUTHORISE
+# ==============================================================================
 
-SIGNING_KEYS_DIR="vendor/lineage-priv/keys"
-KEY_FP_EXPECTED="F7:75:64:36:9A:79:61:C7:D9:3F:D4:04:AE:98:AF:58:FE:E5:25:79:88:74:EE:4E:66:F7:11:AB:26:45:8E:3A"
-
-key_fp() {
+key_fingerprint() {
   openssl x509 -in "$1" -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2
 }
 
 own_keys_ok() {
-  [ -f "${SIGNING_KEYS_DIR}/releasekey.pk8" ] \
-    && [ "$(key_fp "${SIGNING_KEYS_DIR}/releasekey.x509.pem")" = "${KEY_FP_EXPECTED}" ]
+  [ -f "${PRIV_DIR}/releasekey.pk8" ] \
+    && [ "$(key_fingerprint "${PRIV_DIR}/releasekey.x509.pem")" = "${KEY_FP_EXPECTED}" ]
 }
 
-if ! own_keys_ok && [ -n "${GH_TOKEN:-}" ]; then
-  echo "--> Own keys not present. Fetching priv-keys..."
-  TMP_KEYS=$(mktemp -d)
-  AUTH=$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 | tr -d '\n')
-  if GIT_TERMINAL_PROMPT=0 git -c "http.extraheader=AUTHORIZATION: basic ${AUTH}" \
-       clone --depth=1 https://github.com/Justadeayo/priv-keys "${TMP_KEYS}/keys" >/dev/null 2>&1 \
-     && [ "$(key_fp "${TMP_KEYS}/keys/releasekey.x509.pem")" = "${KEY_FP_EXPECTED}" ]; then
-    rm -rf "${SIGNING_KEYS_DIR}"
-    mkdir -p "$(dirname "${SIGNING_KEYS_DIR}")"
-    mv "${TMP_KEYS}/keys" "${SIGNING_KEYS_DIR}"
-    echo "✅ Own keys fetched and verified."
+load_keys() {
+  local pass tmp response tmp_resp http_code
+
+  if [ -n "${KEY_PASS}" ]; then
+    pass="${KEY_PASS}"
   else
-    echo "⚠️ priv-keys could not be fetched or verified. Existing folder left unchanged."
+    tmp_resp="$(mktemp)"
+    http_code="$(curl -sSL -w "%{http_code}" -o "${tmp_resp}" --max-time 10 "${WORKER_URL}/get-key" 2>/dev/null)"
+    response="$(cat "${tmp_resp}")"
+    rm -f "${tmp_resp}"
+
+    if [ "${http_code}" -ne 200 ]; then
+      echo "⚠️ Worker request failed with HTTP status ${http_code}."
+      return 1
+    fi
+
+    pass="$(echo "${response}" | jq -r '.key // .passphrase // .secret // .pass // empty' 2>/dev/null)"
+    if [ -z "${pass}" ] || [ "${pass}" = "null" ]; then
+      pass="$(echo "${response}" | tr -d '\r\n' | sed -e 's/^ *//' -e 's/ *$//')"
+    fi
   fi
-  rm -rf "${TMP_KEYS}"
-fi
 
+  if [ -z "${pass}" ]; then
+    echo "⚠️ No key passphrase available (KEY_PASS unset and Worker returned nothing)."
+    return 1
+  fi
+
+  tmp="$(mktemp)"
+  if ! curl -fsSL "${ASSET_URL}" 2>/dev/null \
+    | jq -er --arg k "${JSON_KEY}" '.[$k] // empty' 2>/dev/null \
+    | base64 -d > "${tmp}" 2>/dev/null || [ ! -s "${tmp}" ]; then
+    rm -f "${tmp}"
+    echo "⚠️ Could not fetch or decode '${JSON_KEY}' from the gist."
+    return 1
+  fi
+
+  mkdir -p "${PRIV_DIR}"
+  if ! KEY_PASS="${pass}" openssl enc -d -aes-256-cbc -pbkdf2 -pass env:KEY_PASS -in "${tmp}" 2>/dev/null \
+    | tar -xzC "${PRIV_DIR}" 2>/dev/null; then
+    rm -f "${tmp}"
+    echo "⚠️ Decryption failed. Wrong passphrase or corrupted key archive."
+    return 1
+  fi
+  rm -f "${tmp}"
+
+  find "${PRIV_DIR}" -mindepth 2 -type f -exec mv -t "${PRIV_DIR}" {} + 2>/dev/null || true
+  find "${PRIV_DIR}" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+
+  if own_keys_ok; then
+    return 0
+  fi
+  echo "⚠️ Extracted key fingerprint does not match KEY_FP_EXPECTED."
+  return 1
+}
+
+KEY_SOURCE=""
+echo "--> Checking release keys..."
 if own_keys_ok; then
-  printf 'PRODUCT_DEFAULT_DEV_CERTIFICATE := vendor/lineage-priv/keys/releasekey\n' > "${SIGNING_KEYS_DIR}/keys.mk"
-  echo "✅ Using own signing keys."
-  tg_send "🔑 Using Own Signing Keys"
-else
-  rm -f "${SIGNING_KEYS_DIR}/keys.mk"
-  echo "--> Using test keys."
-  tg_send "⚠️ Using Default Test Keys"
+  KEY_SOURCE="on disk"
+elif load_keys; then
+  KEY_SOURCE="gist fallback"
 fi
 
+if [ -n "${KEY_SOURCE}" ]; then
+  printf 'PRODUCT_DEFAULT_DEV_CERTIFICATE := vendor/lineage-priv/keys/releasekey\n' > "${PRIV_DIR}/keys.mk"
+  echo "✅ Release key verified (${KEY_SOURCE}). Building personal release-signed."
+  tg_send "🔑 *Signing:* personal release key (${KEY_SOURCE}, fingerprint verified)"
+else
+  rm -f "${PRIV_DIR}/keys.mk"
+  echo "⚠️ No verified release key. Building with the test key."
+  tg_send "⚠️ *Release key unavailable.* Building test-signed (not dirty-flash compatible with release builds)."
+fi
 
 
 
