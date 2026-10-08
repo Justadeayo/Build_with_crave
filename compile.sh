@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 
-set -e
 export TZ="Africa/Lagos"
 
 # ==============================================================================
 # DEPENDENCY CHECK
 # ==============================================================================
 
-for tool in curl jq openssl git rclone bc flex bison rsync zip unzip; do
+for tool in curl jq openssl git bc flex bison rsync zip unzip; do
   command -v "$tool" >/dev/null 2>&1 || echo "⚠️ Warning: $tool is not installed"
 done
 
@@ -54,7 +53,6 @@ MANIFEST_LOCAL_BRANCH="main"
 
 OUT_DIR="out/target/product/${DEVICE}"
 GOFILE_RETRY_MAX=8
-GDRIVE_REMOTE="${GDRIVE_REMOTE:-${DEVICE}:DerpFest_Builds}"
 JOBS=$(nproc 2>/dev/null || echo 4)
 SM="Default"
 START_TIME="$(date +%s)"
@@ -142,11 +140,6 @@ find .repo/project-objects -type d -name hooks -exec rm -rf {} + 2>/dev/null || 
 
 
 rm -rf prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 \
-       hardware/qcom-caf/common \
-       hardware/qcom-caf/sm8150/display \
-       device/xiaomi/violet \
-       kernel/xiaomi/violet \
-       vendor/xiaomi/violet \
        .repo/local_manifests 2>/dev/null || true
 
 
@@ -206,6 +199,48 @@ else
 fi
 
 
+#
+# SIGNING_KEYS
+#
+
+SIGNING_KEYS_DIR="vendor/lineage-priv/keys"
+KEY_FP_EXPECTED="F7:75:64:36:9A:79:61:C7:D9:3F:D4:04:AE:98:AF:58:FE:E5:25:79:88:74:EE:4E:66:F7:11:AB:26:45:8E:3A"
+
+key_fp() {
+  openssl x509 -in "$1" -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2
+}
+
+own_keys_ok() {
+  [ -f "${SIGNING_KEYS_DIR}/releasekey.pk8" ] \
+    && [ "$(key_fp "${SIGNING_KEYS_DIR}/releasekey.x509.pem")" = "${KEY_FP_EXPECTED}" ]
+}
+
+if ! own_keys_ok && [ -n "${GH_TOKEN:-}" ]; then
+  echo "--> Own keys not present. Fetching priv-keys..."
+  TMP_KEYS=$(mktemp -d)
+  AUTH=$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 | tr -d '\n')
+  if GIT_TERMINAL_PROMPT=0 git -c "http.extraheader=AUTHORIZATION: basic ${AUTH}" \
+       clone --depth=1 https://github.com/Justadeayo/priv-keys "${TMP_KEYS}/keys" >/dev/null 2>&1 \
+     && [ "$(key_fp "${TMP_KEYS}/keys/releasekey.x509.pem")" = "${KEY_FP_EXPECTED}" ]; then
+    rm -rf "${SIGNING_KEYS_DIR}"
+    mkdir -p "$(dirname "${SIGNING_KEYS_DIR}")"
+    mv "${TMP_KEYS}/keys" "${SIGNING_KEYS_DIR}"
+    echo "✅ Own keys fetched and verified."
+  else
+    echo "⚠️ priv-keys could not be fetched or verified. Existing folder left unchanged."
+  fi
+  rm -rf "${TMP_KEYS}"
+fi
+
+if own_keys_ok; then
+  printf 'PRODUCT_DEFAULT_DEV_CERTIFICATE := vendor/lineage-priv/keys/releasekey\n' > "${SIGNING_KEYS_DIR}/keys.mk"
+  echo "✅ Using own signing keys."
+  tg_send "🔑 Using Own Signing Keys"
+else
+  rm -f "${SIGNING_KEYS_DIR}/keys.mk"
+  echo "--> Using test keys."
+  tg_send "⚠️ Using Default Test Keys"
+fi
 
 
 
@@ -349,37 +384,6 @@ fi
 
 
 
-# ==============================================================================
-# 2. VERIFICATION ASSETS SETUP (LOCAL PERSISTENT KEYS)
-# ==============================================================================
-echo "--> Verifying persistent signing assets..."
-
-for CANDIDATE in my-signing-keys my_signing_keys my_private_keys; do
-  if [ -d "vendor/lineage-priv/keys/${CANDIDATE}" ]; then
-    mv vendor/lineage-priv/keys/"${CANDIDATE}"/* vendor/lineage-priv/keys/ 2>/dev/null || true
-    rm -rf vendor/lineage-priv/keys/"${CANDIDATE}"
-  fi
-done
-
-KEY_COUNT=$(ls -1 vendor/lineage-priv/keys/*.pk8 2>/dev/null | wc -l)
-
-if [ "$KEY_COUNT" -gt 0 ] && [ -f "vendor/lineage-priv/keys/releasekey.pk8" ]; then
-  echo "====================================="
-  echo "✅ Target output verification profile active ($KEY_COUNT assets found)!"
-  echo "====================================="
-  export PRODUCT_DEFAULT_DEV_CERTIFICATE=vendor/lineage-priv/keys/releasekey
-  SM="Custom"
-  tg_send "🔑 *Asset Status:* Loaded with ${KEY_COUNT} items (\`${SM}\`)"
-else
-  echo "====================================="
-  echo "⚠️ Standard verification profile active (No persistent keys found in vendor/lineage-priv/keys)."
-  echo "====================================="
-  SM="Default"
-  tg_send "⚠️ *Asset Status:* Standard fallback active (\`${SM}\`)"
-fi
-
-
-
 
 # ==============================================================================
 # 3. BUILD COMPILATION (FORCE WAT TIMESTAMPS & CP2A TARGET)
@@ -398,18 +402,16 @@ export TZ="Africa/Lagos"
 export LC_ALL="C.UTF-8"
 export R8_MAX_HEAP_SIZE=4096M
 export BUILD_BROKEN_MISSING_REQUIRED_MODULES=true
-export INLINE_KERNEL_BUILDING=true
-export BUILD_USERNAME="Justus26"
-export BUILD_HOSTNAME="crave"
 export NINJA_ARGS="-k 0"
 
-
-git -C kernel/xiaomi/violet log -1 --oneline || true
 
 tg_send "🛠️ *Compilation Started* (m derp)
 ⏰ $(get_wat_time)"
 
-m derp
+BUILD_OK=0
+if m derp; then
+  BUILD_OK=1
+fi
 
 END_TIME="$(date +%s)"
 DUR=$(( END_TIME - START_TIME ))
@@ -425,29 +427,24 @@ tg_send "🛠️ *Compilation Finished*
 ⏰ $(get_wat_time)"
 
 
-
+BUILD_TIME="${BUILD_TIME:-unknown}"
 
 # ==============================================================================
-# 4. DYNAMIC ARTIFACT DISPATCHER (GOFILE)
+# DISPATCH: GOFILE (ROM + recovery) AND TELEGRAM (JSON)
 # ==============================================================================
 gofile_upload() {
   local FILE="$1"
   [ ! -f "${FILE}" ] && return 1
 
-  local ATTEMPT=0
-  local RESPONSE=""
-  local LINK=""
+  local ATTEMPT=0 RESPONSE="" LINK=""
   local HOSTS=("upload.gofile.io" "upload-eu-par.gofile.io" "upload-na-phx.gofile.io")
 
-  while [ "${ATTEMPT}" -lt "${GOFILE_RETRY_MAX}" ]; do
+  while [ "${ATTEMPT}" -lt 8 ]; do
     local HOST="${HOSTS[$((ATTEMPT % ${#HOSTS[@]}))]}"
     ATTEMPT=$((ATTEMPT + 1))
-
     echo "Uploading attempt ${ATTEMPT} to GoFile (${HOST})..." >&2
     RESPONSE=$(curl -sS -X POST -F "file=@${FILE}" "https://${HOST}/uploadfile" || true)
-
     LINK=$(echo "$RESPONSE" | jq -r '.data.downloadPage // .data.link // empty' 2>/dev/null || true)
-
     if [ -n "$LINK" ] && [ "$LINK" != "null" ]; then
       echo "$LINK"
       return 0
@@ -458,157 +455,49 @@ gofile_upload() {
   return 1
 }
 
-
-
-
-# ==============================================================================
-# 4b. GOOGLE DRIVE DISPATCHER (rclone)
-# ==============================================================================
-GDRIVE_REMOTE_NAME="${GDRIVE_REMOTE%%:*}"
-GDRIVE_READY=0
-if command -v rclone >/dev/null 2>&1; then
-  if rclone listremotes 2>/dev/null | grep -q "^${GDRIVE_REMOTE_NAME}:$"; then
-    GDRIVE_READY=1
-  else
-    echo "⚠️ rclone remote '${GDRIVE_REMOTE_NAME}:' not found in 'rclone listremotes' — skipping Gdrive uploads." >&2
-    echo "   Configure it with 'rclone config' or set GDRIVE_REMOTE to an existing remote." >&2
-  fi
-else
-  echo "⚠️ rclone not available — skipping Gdrive uploads." >&2
-fi
-
-gdrive_upload() {
-  local FILE="$1"
-  [ "${GDRIVE_READY}" -eq 1 ] || return 1
-  [ ! -f "${FILE}" ] && return 1
-
-  local FILENAME
-  FILENAME="$(basename "${FILE}")"
-
-  echo "Uploading ${FILENAME} to Gdrive (${GDRIVE_REMOTE})..." >&2
-  if ! rclone copy "${FILE}" "${GDRIVE_REMOTE}" --retries 3 --low-level-retries 5 2>&1 | sed 's/^/    /' >&2; then
-    echo "⚠️ rclone copy failed for ${FILENAME}." >&2
+tg_send_file() {
+  local FILE="$1" CAPTION="$2"
+  [ ! -f "${FILE}" ] && { echo "⚠️ Not found: ${FILE}"; return 1; }
+  [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ] && return 1
+  local SIZE
+  SIZE=$(stat -c %s "${FILE}")
+  if [ "${SIZE}" -gt 52428800 ]; then
+    tg_send "⚠️ \`$(basename "${FILE}")\` is over 50 MB, not sent to Telegram."
     return 1
   fi
-
-  local LINK
-  LINK=$(rclone link "${GDRIVE_REMOTE}/${FILENAME}" 2>/dev/null || true)
-  if [ -n "${LINK}" ]; then
-    echo "${LINK}"
-    return 0
-  fi
-  echo "⚠️ Upload succeeded but could not fetch a shareable link for ${FILENAME}." >&2
-  return 1
+  curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
+    -F "chat_id=${TELEGRAM_CHAT_ID}" \
+    -F "caption=${CAPTION}" \
+    -F "document=@${FILE}" >/dev/null 2>&1 || true
 }
 
-
-
-
-# ==============================================================================
-# 5. ARTIFACT HANDLING & DISPATCH NOTIFICATION
-# ==============================================================================
-echo "--> Processing build artifacts..."
-
-JSON_FILE="${OUT_DIR}/${DEVICE}.json"
-
-crave_pull_if_missing() {
-  local TARGET="$1"
-  [ -f "${TARGET}" ] && return 0
-  if command -v crave >/dev/null 2>&1; then
-    echo "--> ${TARGET} not found locally — attempting 'crave pull'..."
-    crave pull "${TARGET}" "$(dirname "${TARGET}")/" 2>/dev/null || true
-  fi
-}
-
-shopt -s nullglob
-ROM_ZIPS=("${OUT_DIR}"/DerpFest*.zip)
-shopt -u nullglob
-
-if [ ${#ROM_ZIPS[@]} -eq 0 ] && command -v crave >/dev/null 2>&1; then
-  echo "--> No local ROM zip found — attempting 'crave pull'..."
-  crave pull "${OUT_DIR}"/DerpFest*.zip "${OUT_DIR}/" 2>/dev/null || true
-  shopt -s nullglob
-  ROM_ZIPS=("${OUT_DIR}"/DerpFest*.zip)
-  shopt -u nullglob
-elif [ ${#ROM_ZIPS[@]} -eq 0 ]; then
-  echo "ℹ️ 'crave' CLI not found and no local zip — nothing to pull, continuing."
-fi
-
-crave_pull_if_missing "${OUT_DIR}/recovery.img"
-crave_pull_if_missing "${JSON_FILE}"
-
+BUILD_OK="${BUILD_OK:-0}"
+ROM_ZIP=$(ls -t "${OUT_DIR}"/DerpFest-*.zip 2>/dev/null | head -1 || true)
+RECOVERY_LINK=""
 UPLOAD_RESULTS=""
-ROM_SIZE="Unknown"
-FINAL_DOWNLOAD_URL=""
 
-if [ -f "${JSON_FILE}" ]; then
-  echo "🧾 Dispatching $(basename "${JSON_FILE}") to Gdrive..."
-  JSON_GD_URL="$(gdrive_upload "${JSON_FILE}" || true)"
-  if [ -n "${JSON_GD_URL}" ]; then
-    echo "✅ Gdrive URL: ${JSON_GD_URL}"
-    UPLOAD_RESULTS+="🧾 OTA JSON (Gdrive): ${JSON_GD_URL}"$'\n'
-  elif [ "${GDRIVE_READY}" -eq 1 ]; then
-    echo "⚠️ Gdrive JSON dispatch failed."
-  fi
+if [ "${BUILD_OK}" -ne 1 ]; then
+  ROM_SIZE="not built"
+  UPLOAD_RESULTS="❌ Build failed. Nothing uploaded."
+elif [ -n "${ROM_ZIP}" ] && [ -f "${ROM_ZIP}" ]; then
+  ROM_SIZE=$(du -h "${ROM_ZIP}" | cut -f1)
+  ROM_SHA=$(sha256sum "${ROM_ZIP}" | cut -d' ' -f1)
+  ROM_LINK=$(gofile_upload "${ROM_ZIP}" || true)
+  UPLOAD_RESULTS="📤 *GoFile (ROM):* ${ROM_LINK:-upload failed}
+🔐 *SHA256:* \`${ROM_SHA}\`"
+  tg_send_file "${OUT_DIR}/${DEVICE}.json" "OTA json"
+  RECOVERY_LINK=$(gofile_upload "${OUT_DIR}/recovery.img" || true)
 else
-  echo "ℹ️ No OTA JSON manifest found at ${JSON_FILE} — skipping."
+  ROM_SIZE="not found"
+  UPLOAD_RESULTS="❌ ROM zip not found in ${OUT_DIR}"
 fi
 
-if [ ${#ROM_ZIPS[@]} -gt 0 ]; then
-  for ZIP in "${ROM_ZIPS[@]}"; do
-    [ -f "${ZIP}" ] || continue
-    FILENAME="$(basename "${ZIP}")"
-    ROM_SIZE="$(du -h "${ZIP}" 2>/dev/null | awk '{print $1}')"
-
-    echo "📦 Dispatching ${FILENAME} to Web Mirror (GoFile)..."
-    GO_URL="$(gofile_upload "${ZIP}" || true)"
-    if [ -n "${GO_URL}" ]; then
-      FINAL_DOWNLOAD_URL="${GO_URL}"
-      echo "✅ Web Mirror URL: ${FINAL_DOWNLOAD_URL}"
-      UPLOAD_RESULTS+="📦 Web Mirror: ${FINAL_DOWNLOAD_URL}"$'\n'
-    else
-      echo "⚠️ Mirror dispatch failed after retries."
-      UPLOAD_RESULTS+="⚠️ Web Mirror: Dispatch Failed (Saved locally)"$'\n'
-    fi
-
-    echo "📦 Dispatching ${FILENAME} to Gdrive..."
-    GD_URL="$(gdrive_upload "${ZIP}" || true)"
-    if [ -n "${GD_URL}" ]; then
-      echo "✅ Gdrive URL: ${GD_URL}"
-      UPLOAD_RESULTS+="☁️ Gdrive: ${GD_URL}"$'\n'
-    elif [ "${GDRIVE_READY}" -eq 1 ]; then
-      echo "⚠️ Gdrive dispatch failed."
-      UPLOAD_RESULTS+="⚠️ Gdrive: Dispatch Failed"$'\n'
-    fi
-  done
-else
-  UPLOAD_RESULTS+="⚠️ Build Output: No target archive detected."$'\n'
-fi
-
-if [ -f "${OUT_DIR}/recovery.img" ]; then
-  echo "🔧 Dispatching recovery.img to GoFile..."
-  REC_URL="$(gofile_upload "${OUT_DIR}/recovery.img" || true)"
-  [ -n "${REC_URL}" ] && UPLOAD_RESULTS+="🔧 Recovery: ${REC_URL}"$'\n'
-
-  echo "🔧 Dispatching recovery.img to Gdrive..."
-  REC_GD_URL="$(gdrive_upload "${OUT_DIR}/recovery.img" || true)"
-  [ -n "${REC_GD_URL}" ] && UPLOAD_RESULTS+="☁️ Recovery (Gdrive): ${REC_GD_URL}"$'\n'
-fi
-
-
-
-
-
-tg_send "🎉 *Build Finished Successfully!*
+tg_send "🎉 *Build Finished!*
 📱 *Device:* \`${DEVICE}\`
 📦 *ROM:* \`${ROM_NAME}\` (Android 17)
-🔑 *Profile Mode:* \`${SM}\` (${KEY_COUNT:-0} keys)
-⏱ *Compilation Time:* \`${BUILD_TIME}\`
+⏱ *Compile Time:* \`${BUILD_TIME}\`
 📏 *Size:* \`${ROM_SIZE}\`
 ⏰ *Finished at:* $(get_wat_time)
 
-${UPLOAD_RESULTS}"
-
-echo "========================================="
-echo "🎉 Process finished successfully!"
-echo "========================================="
+${UPLOAD_RESULTS}
+🧰 *Recovery (GoFile):* ${RECOVERY_LINK:-not uploaded}"
