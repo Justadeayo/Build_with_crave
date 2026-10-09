@@ -145,6 +145,7 @@ find .repo/project-objects -type d -name hooks -exec rm -rf {} + 2>/dev/null || 
 
 
 rm -rf prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 \
+       device/xiaomi/violet \
        .repo/local_manifests 2>/dev/null || true
 
 
