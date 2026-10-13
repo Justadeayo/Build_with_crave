@@ -145,7 +145,6 @@ find .repo/project-objects -type d -name hooks -exec rm -rf {} + 2>/dev/null || 
 
 
 rm -rf prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 \
-       device/xiaomi/violet \
        .repo/local_manifests 2>/dev/null || true
 
 
@@ -449,7 +448,6 @@ echo "--> Starting compilation..."
 export TZ="Africa/Lagos"
 export LC_ALL="C.UTF-8"
 export R8_MAX_HEAP_SIZE=4096M
-export BUILD_BROKEN_MISSING_REQUIRED_MODULES=true
 export NINJA_ARGS="-k 0"
 
 
