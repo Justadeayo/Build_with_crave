@@ -77,8 +77,6 @@ cleanup() {
 
    G=out/soong/.intermediates/vendor/lineage/build/soong/generated_kernel_includes
   echo "--> Generated kernel header check:"
-  echo "    msm_ipa.h:    $(find "$G" -name msm_ipa.h -size +0 2>/dev/null | head -1)"
-  echo "    videodev2.h:  $(find "$G" -name videodev2.h -size +0 2>/dev/null | head -1)"
   echo "    header files: $(find "$G" -name '*.h' 2>/dev/null | wc -l)"
   echo "    gcc/clang not found in log: $(zcat out/verbose.log.gz 2>/dev/null | grep -c -E '(gcc|clang): (not found|error)' || true)"
   zcat out/verbose.log.gz 2>/dev/null | grep -m1 -A25 'Entering directory.*generated_kernel_includes/gen' | cut -c1-200 | head -40 || true
@@ -173,35 +171,6 @@ fi
 rm -rf hardware/xiaomi/packages/DSPVolumeSynchronizer
 
 
-
-
-
-
-# ==============================================================================
-# DEVICE TREE INTEGRITY CHECK
-# ==============================================================================
-DEVICE_TREE_DIR="device/xiaomi/violet"
-
-if [ ! -f "${DEVICE_TREE_DIR}/lineage_violet.mk" ]; then
-    echo "--> Device tree missing or invalid. Cloning started.."
-    rm -rf "${DEVICE_TREE_DIR}"
-    git clone --depth=1 https://github.com/Justadeayo/device_xiaomi_violet -b 17 "${DEVICE_TREE_DIR}"
-else
-    echo "✅ Device tree check passed."
-fi
-
-# ==============================================================================
-# DISPLAY CAF HAL INTEGRITY CHECK
-# ==============================================================================
-DISPLAY_HAL_DIR="hardware/qcom-caf/sm8150/display"
-
-if ! grep -q "generated_kernel_headers" "${DISPLAY_HAL_DIR}/Android.bp" 2>/dev/null \
-   || [ ! -f "${DISPLAY_HAL_DIR}/include/linux/videodev2.h" ]; then    echo "--> Display HAL missing or invalid. Cloning custom fork..."
-    rm -rf "${DISPLAY_HAL_DIR}"
-    git clone --depth=1 https://github.com/Justadeayo/android_hardware_qcom_display -b lineage-24.0-caf-sm8150 "${DISPLAY_HAL_DIR}"
-else
-    echo "✅ Display HAL check passed."
-fi
 
 
 # ==============================================================================
@@ -451,7 +420,7 @@ export R8_MAX_HEAP_SIZE=4096M
 export NINJA_ARGS="-k 0"
 
 
-tg_send "🛠️ *Compilation Started* (m derp)
+tg_send "🛠️ *Compilation Started, grab some coffee and hope for the best*
 ⏰ $(get_wat_time)"
 
 BUILD_OK=0
