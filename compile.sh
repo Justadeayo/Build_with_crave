@@ -74,13 +74,6 @@ get_wat_time() {
 # ==============================================================================
 cleanup() {
   local exit_code=$?
-
-   G=out/soong/.intermediates/vendor/lineage/build/soong/generated_kernel_includes
-  echo "--> Generated kernel header check:"
-  echo "    header files: $(find "$G" -name '*.h' 2>/dev/null | wc -l)"
-  echo "    gcc/clang not found in log: $(zcat out/verbose.log.gz 2>/dev/null | grep -c -E '(gcc|clang): (not found|error)' || true)"
-  zcat out/verbose.log.gz 2>/dev/null | grep -m1 -A25 'Entering directory.*generated_kernel_includes/gen' | cut -c1-200 | head -40 || true
-  
   if [ "$exit_code" -ne 0 ]; then
     echo "❌ Script aborted with exit code ${exit_code}."
     tg_send "🚨 *Build Failed!*
@@ -490,6 +483,8 @@ BUILD_OK="${BUILD_OK:-0}"
 ROM_ZIP=$(ls -t "${OUT_DIR}"/DerpFest-*.zip 2>/dev/null | head -1 || true)
 RECOVERY_LINK=""
 UPLOAD_RESULTS=""
+ROM_LINK=""
+ROM_SHA=""
 
 if [ "${BUILD_OK}" -ne 1 ]; then
   ROM_SIZE="not built"
@@ -506,6 +501,9 @@ else
   ROM_SIZE="not found"
   UPLOAD_RESULTS="❌ ROM zip not found in ${OUT_DIR}"
 fi
+
+echo "ROM LINK: ${ROM_LINK}"
+echo "ROM SHA: ${ROM_SHA}"
 
 tg_send "🎉 *Build Finished!*
 📱 *Device:* \`${DEVICE}\`
