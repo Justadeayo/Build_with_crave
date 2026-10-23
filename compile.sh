@@ -161,9 +161,6 @@ fi
 
 
 
-rm -rf hardware/xiaomi/packages/DSPVolumeSynchronizer
-
-
 
 
 # ==============================================================================
@@ -376,18 +373,6 @@ if [ -n "$(missing_tools)" ]; then
     echo "⚠️ Still missing: $(missing_tools) — the inline kernel build will fail."
   fi
 fi
-
-
-
-
-K=kernel/xiaomi/violet
-H=$(git -C $K rev-parse HEAD)
-if [ "$(cat .kernel_headers_rev 2>/dev/null)" != "$H" ]; then
-  rm -rf out/soong/.intermediates/vendor/lineage/build/soong/generated_kernel_includes
-  rm -rf "${OUT_DIR}/obj/KERNEL_OBJ"
-  echo "$H" > .kernel_headers_rev
-fi
-
 
 
 
