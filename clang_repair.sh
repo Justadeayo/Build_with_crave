@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
+
 # ==============================================================================
-# clang_repair.sh — HOST CLANG GUARD + KERNEL CLANG GUARD
+# clang_repair.sh — CLANG GUARD + CROSS TOOLCHAIN CHECK
 # ==============================================================================
 
 CLANG_PRJ="prebuilts/clang/host/linux-x86"
@@ -37,8 +38,6 @@ clang_ok() {
   return 0
 }
 
-
-
 repair_clang() {
   local prj="$1" name="$2" tag="$3" dir="$4"
 
@@ -57,8 +56,6 @@ repair_clang() {
 
   return 1
 }
-
-
 
 ensure_clang() {
   local prj="$1" name="$2" tag="$3" dir="${1}/${2}"
@@ -89,14 +86,8 @@ ${diff_log}
   tg_send "✅ ${name} repaired by repair ${CLANG_FIXED_BY}." || true
 }
 
-
-
-
-
-
-
-
 CROSS_TOOLS="arm-linux-gnueabi-gcc arm-linux-gnueabi-ld aarch64-linux-gnu-gcc aarch64-linux-gnu-ld aarch64-linux-gnu-elfedit"
+
 missing_tools() {
   local t out=""
   for t in ${CROSS_TOOLS}; do
@@ -104,12 +95,15 @@ missing_tools() {
   done
   echo "${out# }"
 }
-if [ -n "$(missing_tools)" ]; then
-  echo "⚠️ Missing cross tools: $(missing_tools) — attempting install..."
-  sudo apt-get update -qq && sudo apt-get install -y gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu || true
-  if [ -z "$(missing_tools)" ]; then
-    echo "✅ Cross toolchains ready."
-  else
-    echo "⚠️ Still missing: $(missing_tools) — the inline kernel build will fail."
+
+ensure_cross_tools() {
+  if [ -n "$(missing_tools)" ]; then
+    echo "⚠️ Missing cross tools: $(missing_tools) — attempting install..."
+    sudo apt-get update -qq && sudo apt-get install -y gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu || true
+    if [ -z "$(missing_tools)" ]; then
+      echo "✅ Cross toolchains ready."
+    else
+      echo "⚠️ Still missing: $(missing_tools) — the inline kernel build will fail."
+    fi
   fi
-fi
+}

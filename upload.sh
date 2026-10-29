@@ -1,75 +1,74 @@
 #!/usr/bin/env bash
+
 # ==============================================================================
-# upload.sh — GOFILE DISPATCHER, GDRIVE DISPATCHER, ARTIFACT HANDLING
+# upload.sh — SOURCEFORGE DISPATCHER, TELEGRAM FILE SEND, ARTIFACT HANDLING
 # ==============================================================================
 
-gofile_upload() {
-  local FILE="$1"
-  [ ! -f "${FILE}" ] && return 1
+SF_USER="${SF_USER:-justus-26}"
+SF_PROJECT="${SF_PROJECT:-derp-violet}"
+SF_RECOVERY_DIR="${SF_RECOVERY_DIR:-recovery-derp}"
+SF_KEY="${SF_KEY:-$(pwd)/.ssh/sourceforge_ed25519}"
 
-  local ATTEMPT=0
-  local RESPONSE=""
-  local LINK=""
-  local HOSTS=("upload.gofile.io" "upload-eu-par.gofile.io" "upload-na-phx.gofile.io")
+sf_upload() {
+  local FILE="$1" SUB="${2:-}" FNAME DEST_DIR SSH DEST URL CODE i
+  [ -n "${SF_USER:-}" ] || { echo "❌ SF_USER is not set" >&2; return 1; }
+  [ -f "${FILE}" ] || { echo "❌ File not found: ${FILE}" >&2; return 1; }
 
-  while [ "${ATTEMPT}" -lt "${GOFILE_RETRY_MAX}" ]; do
-    local HOST="${HOSTS[$((ATTEMPT % ${#HOSTS[@]}))]}"
-    ATTEMPT=$((ATTEMPT + 1))
+  FNAME=$(basename "${FILE}")
+  DEST_DIR="${SUB:+$SUB/}"
+  SSH="ssh -i ${SF_KEY} -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30"
+  DEST="${SF_USER},${SF_PROJECT}@frs.sourceforge.net:/home/frs/project/${SF_PROJECT}/${DEST_DIR}"
 
-    echo "Uploading attempt ${ATTEMPT} to GoFile (${HOST})..." >&2
-    RESPONSE=$(curl -sS -X POST -F "file=@${FILE}" "https://${HOST}/uploadfile" || true)
-
-    LINK=$(echo "$RESPONSE" | jq -r '.data.downloadPage // .data.link // empty' 2>/dev/null || true)
-
-    if [ -n "$LINK" ] && [ "$LINK" != "null" ]; then
-      echo "$LINK"
-      return 0
-    fi
-    echo "⚠️ Attempt ${ATTEMPT} failed. Raw response: ${RESPONSE}" >&2
-    sleep $((ATTEMPT * 2))
+  for i in 1 2 3 4 5; do
+    rsync -a --partial --timeout=120 --chmod=D755,F644 -e "${SSH}" "${FILE}" "${DEST}" >&2 && break
+    [ "${i}" -eq 5 ] && return 1
+    echo "SourceForge attempt ${i} failed, retrying in 30s..." >&2
+    sleep 30
   done
-  return 1
+
+  URL="https://sourceforge.net/projects/${SF_PROJECT}/files/${DEST_DIR}${FNAME}/download"
+  CODE=$(curl -sL -r 0-0 -o /dev/null -w '%{http_code}' "${URL}" || true)
+  case "${CODE}" in
+    200|206) ;;
+    *) echo "⚠️ URL check returned HTTP ${CODE} (may just be indexing lag): ${URL}" >&2 ;;
+  esac
+  echo "${URL}"
 }
 
-GDRIVE_REMOTE_NAME=""
-GDRIVE_READY=0
+update_ota_json() {
+  local ZIP="$1" URL="$2" JSON="${OUT_DIR}/${DEVICE}.json"
+  [ -f "${JSON}" ] || return 0
 
-upload_init() {
-  GDRIVE_REMOTE_NAME="${GDRIVE_REMOTE%%:*}"
-  if command -v rclone >/dev/null 2>&1; then
-    if rclone listremotes 2>/dev/null | grep -q "^${GDRIVE_REMOTE_NAME}:$"; then
-      GDRIVE_READY=1
+  local SIZE
+  SIZE=$(stat -c %s "${ZIP}")
+  jq --arg url "${URL}" --arg id "${ROM_SHA}" --arg fn "$(basename "${ZIP}")" \
+     --argjson size "${SIZE}" --argjson dt "$(date +%s)" '
+    if has("response") then
+      .response[0] += {url:$url, id:$id, filename:$fn, size:$size, datetime:$dt}
     else
-      echo "⚠️ rclone remote '${GDRIVE_REMOTE_NAME}:' not found in 'rclone listremotes' — skipping Gdrive uploads." >&2
-      echo "   Configure it with 'rclone config' or set GDRIVE_REMOTE to an existing remote." >&2
-    fi
-  else
-    echo "⚠️ rclone not available — skipping Gdrive uploads." >&2
-  fi
+      . + {url:$url, id:$id, filename:$fn, size:$size, datetime:$dt}
+    end' "${JSON}" > "${JSON}.tmp" && mv "${JSON}.tmp" "${JSON}" \
+    || { rm -f "${JSON}.tmp"; echo "⚠️ Could not update ${DEVICE}.json" >&2; return 1; }
 }
 
-gdrive_upload() {
-  local FILE="$1"
-  [ "${GDRIVE_READY}" -eq 1 ] || return 1
-  [ ! -f "${FILE}" ] && return 1
-
-  local FILENAME
-  FILENAME="$(basename "${FILE}")"
-
-  echo "Uploading ${FILENAME} to Gdrive (${GDRIVE_REMOTE})..." >&2
-  if ! rclone copy "${FILE}" "${GDRIVE_REMOTE}" --retries 3 --low-level-retries 5 2>&1 | sed 's/^/    /' >&2; then
-    echo "⚠️ rclone copy failed for ${FILENAME}." >&2
-    return 1
-  fi
-
-  local LINK
-  LINK=$(rclone link "${GDRIVE_REMOTE}/${FILENAME}" 2>/dev/null || true)
-  if [ -n "${LINK}" ]; then
-    echo "${LINK}"
+tg_send_file() {
+  local FILE="$1" CAPTION="$2" SIZE
+  if [ ! -f "${FILE}" ]; then
+    echo "⚠️ Not found: ${FILE}" >&2
     return 0
   fi
-  echo "⚠️ Upload succeeded but could not fetch a shareable link for ${FILENAME}." >&2
-  return 1
+  if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+    return 0
+  fi
+  SIZE=$(stat -c %s "${FILE}")
+  if [ "${SIZE}" -gt 52428800 ]; then
+    tg_send "⚠️ \`$(basename "${FILE}")\` is over 50 MB, not sent to Telegram."
+    return 0
+  fi
+  curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
+    -F "chat_id=${TELEGRAM_CHAT_ID}" \
+    -F "caption=${CAPTION}" \
+    -F "document=@${FILE}" >/dev/null 2>&1 || true
 }
 
 crave_pull_if_missing() {
@@ -85,6 +84,10 @@ dispatch_artifacts() {
   echo "--> Processing build artifacts..."
 
   local JSON_FILE="${OUT_DIR}/${DEVICE}.json"
+  local ROM_ZIP="" ROM_LINK="" REC_FILE="" REC_LINK=""
+
+  crave_pull_if_missing "${OUT_DIR}/recovery.img"
+  crave_pull_if_missing "${JSON_FILE}"
 
   shopt -s nullglob
   local ROM_ZIPS=("${OUT_DIR}"/DerpFest*.zip)
@@ -96,71 +99,51 @@ dispatch_artifacts() {
     shopt -s nullglob
     ROM_ZIPS=("${OUT_DIR}"/DerpFest*.zip)
     shopt -u nullglob
-  elif [ ${#ROM_ZIPS[@]} -eq 0 ]; then
-    echo "ℹ️ 'crave' CLI not found and no local zip — nothing to pull, continuing."
   fi
-
-  crave_pull_if_missing "${OUT_DIR}/recovery.img"
-  crave_pull_if_missing "${JSON_FILE}"
 
   UPLOAD_RESULTS=""
   ROM_SIZE="Unknown"
-  FINAL_DOWNLOAD_URL=""
+  ROM_SHA=""
 
-  if [ -f "${JSON_FILE}" ]; then
-    echo "🧾 Dispatching $(basename "${JSON_FILE}") to Gdrive..."
-    local JSON_GD_URL
-    JSON_GD_URL="$(gdrive_upload "${JSON_FILE}" || true)"
-    if [ -n "${JSON_GD_URL}" ]; then
-      echo "✅ Gdrive URL: ${JSON_GD_URL}"
-      UPLOAD_RESULTS+="🧾 OTA JSON (Gdrive): ${JSON_GD_URL}"$'\n'
-    elif [ "${GDRIVE_READY}" -eq 1 ]; then
-      echo "⚠️ Gdrive JSON dispatch failed."
-    fi
-  else
-    echo "ℹ️ No OTA JSON manifest found at ${JSON_FILE} — skipping."
-  fi
-
-  if [ ${#ROM_ZIPS[@]} -gt 0 ]; then
-    local ZIP FILENAME GO_URL GD_URL
-    for ZIP in "${ROM_ZIPS[@]}"; do
-      [ -f "${ZIP}" ] || continue
-      FILENAME="$(basename "${ZIP}")"
-      ROM_SIZE="$(du -h "${ZIP}" 2>/dev/null | awk '{print $1}')"
-
-      echo "📦 Dispatching ${FILENAME} to Web Mirror (GoFile)..."
-      GO_URL="$(gofile_upload "${ZIP}" || true)"
-      if [ -n "${GO_URL}" ]; then
-        FINAL_DOWNLOAD_URL="${GO_URL}"
-        echo "✅ Web Mirror URL: ${FINAL_DOWNLOAD_URL}"
-        UPLOAD_RESULTS+="📦 Web Mirror: ${FINAL_DOWNLOAD_URL}"$'\n'
-      else
-        echo "⚠️ Mirror dispatch failed after retries."
-        UPLOAD_RESULTS+="⚠️ Web Mirror: Dispatch Failed (Saved locally)"$'\n'
-      fi
-
-      echo "📦 Dispatching ${FILENAME} to Gdrive..."
-      GD_URL="$(gdrive_upload "${ZIP}" || true)"
-      if [ -n "${GD_URL}" ]; then
-        echo "✅ Gdrive URL: ${GD_URL}"
-        UPLOAD_RESULTS+="☁️ Gdrive: ${GD_URL}"$'\n'
-      elif [ "${GDRIVE_READY}" -eq 1 ]; then
-        echo "⚠️ Gdrive dispatch failed."
-        UPLOAD_RESULTS+="⚠️ Gdrive: Dispatch Failed"$'\n'
-      fi
-    done
-  else
+  if [ ${#ROM_ZIPS[@]} -eq 0 ]; then
+    echo "ℹ️ No ROM zip found in ${OUT_DIR}."
     UPLOAD_RESULTS+="⚠️ Build Output: No target archive detected."$'\n'
+  else
+    ROM_ZIP="$(ls -t "${ROM_ZIPS[@]}" | head -1)"
+    ROM_SIZE="$(du -h "${ROM_ZIP}" 2>/dev/null | awk '{print $1}')"
+    ROM_SHA="$(sha256sum "${ROM_ZIP}" | cut -d' ' -f1)"
+
+    echo "📦 Dispatching $(basename "${ROM_ZIP}") to SourceForge..."
+    ROM_LINK="$(sf_upload "${ROM_ZIP}" "" || true)"
+    if [ -n "${ROM_LINK}" ]; then
+      echo "✅ SourceForge URL: ${ROM_LINK}"
+      UPLOAD_RESULTS+="📤 SourceForge (ROM): ${ROM_LINK}"$'\n'
+      UPLOAD_RESULTS+="🔐 SHA256: \`${ROM_SHA}\`"$'\n'
+    else
+      echo "⚠️ SourceForge ROM upload failed."
+      UPLOAD_RESULTS+="⚠️ SourceForge (ROM): upload failed"$'\n'
+    fi
+
+    if [ -n "${ROM_LINK}" ]; then
+      if [ -f "${JSON_FILE}" ]; then
+        update_ota_json "${ROM_ZIP}" "${ROM_LINK}" || true
+        tg_send_file "${JSON_FILE}" "OTA json" || true
+      else
+        echo "ℹ️ No OTA JSON manifest found at ${JSON_FILE} — skipping."
+      fi
+    fi
   fi
 
   if [ -f "${OUT_DIR}/recovery.img" ]; then
-    echo "🔧 Dispatching recovery.img to GoFile..."
-    local REC_URL REC_GD_URL
-    REC_URL="$(gofile_upload "${OUT_DIR}/recovery.img" || true)"
-    [ -n "${REC_URL}" ] && UPLOAD_RESULTS+="🔧 Recovery: ${REC_URL}"$'\n'
-
-    echo "🔧 Dispatching recovery.img to Gdrive..."
-    REC_GD_URL="$(gdrive_upload "${OUT_DIR}/recovery.img" || true)"
-    [ -n "${REC_GD_URL}" ] && UPLOAD_RESULTS+="☁️ Recovery (Gdrive): ${REC_GD_URL}"$'\n'
+    echo "🔧 Dispatching recovery.img to SourceForge..."
+    REC_FILE="${OUT_DIR}/derp-recovery-$(date +%Y%m%d).img"
+    cp "${OUT_DIR}/recovery.img" "${REC_FILE}"
+    REC_LINK="$(sf_upload "${REC_FILE}" "${SF_RECOVERY_DIR}" || true)"
+    rm -f "${REC_FILE}"
+    if [ -n "${REC_LINK}" ]; then
+      UPLOAD_RESULTS+="🧰 Recovery (SourceForge): ${REC_LINK}"$'\n'
+    else
+      UPLOAD_RESULTS+="⚠️ Recovery (SourceForge): upload failed"$'\n'
+    fi
   fi
 }

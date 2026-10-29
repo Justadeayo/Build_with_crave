@@ -1,31 +1,102 @@
 #!/usr/bin/env bash
+
 # ==============================================================================
-# keys.sh — VERIFICATION ASSETS SETUP (LOCAL PERSISTENT KEYS)
+# keys.sh — RELEASE KEYS
 # ==============================================================================
-setup_signing_keys() {
-  echo "--> Verifying persistent signing assets..."
 
-  for CANDIDATE in my-signing-keys my_signing_keys my_private_keys; do
-    if [ -d "vendor/lineage-priv/keys/${CANDIDATE}" ]; then
-      mv vendor/lineage-priv/keys/"${CANDIDATE}"/* vendor/lineage-priv/keys/ 2>/dev/null || true
-      rm -rf vendor/lineage-priv/keys/"${CANDIDATE}"
-    fi
-  done
+WORKER_URL="https://REDACTED"
+ASSET_URL="https://gist.githubusercontent.com/Justadeayo/d6543288b98712e5944bb6dec36d2091/raw/4c08760bc151daccc24db8f6a576c43d02a1fa36/keys.json"
+JSON_KEY="violet"
+PRIV_DIR="vendor/lineage-priv/keys"
+KEY_FP_EXPECTED="6B:E0:C5:88:6C:C1:FD:B7:52:48:8A:4F:4A:B6:C3:C1:AA:A7:23:27:20:65:9A:2F:38:59:9B:2D:B4:5C:89:F6"
 
-  KEY_COUNT=$(ls -1 vendor/lineage-priv/keys/*.pk8 2>/dev/null | wc -l)
+KEY_SOURCE=""
+KEY_COUNT=0
 
-  if [ "$KEY_COUNT" -gt 0 ] && [ -f "vendor/lineage-priv/keys/releasekey.pk8" ]; then
-    echo "====================================="
-    echo "✅ Target output verification profile active ($KEY_COUNT assets found)!"
-    echo "====================================="
-    export PRODUCT_DEFAULT_DEV_CERTIFICATE=vendor/lineage-priv/keys/releasekey
-    SM="Custom"
-    tg_send "🔑 *Asset Status:* Loaded with ${KEY_COUNT} items (\`${SM}\`)"
+key_fingerprint() {
+  openssl x509 -in "$1" -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2
+}
+
+own_keys_ok() {
+  [ -f "${PRIV_DIR}/releasekey.pk8" ] \
+    && [ "$(key_fingerprint "${PRIV_DIR}/releasekey.x509.pem")" = "${KEY_FP_EXPECTED}" ]
+}
+
+load_keys() {
+  local pass tmp response tmp_resp http_code
+
+  if [ -n "${KEY_PASS}" ]; then
+    pass="${KEY_PASS}"
   else
-    echo "====================================="
-    echo "⚠️ Standard verification profile active (No persistent keys found in vendor/lineage-priv/keys)."
-    echo "====================================="
+    tmp_resp="$(mktemp)"
+    http_code="$(curl -sSL -w "%{http_code}" -o "${tmp_resp}" --max-time 10 "${WORKER_URL}/get-key" 2>/dev/null)"
+    response="$(cat "${tmp_resp}")"
+    rm -f "${tmp_resp}"
+
+    if [ "${http_code}" -ne 200 ]; then
+      echo "⚠️ Worker request failed with HTTP status ${http_code}."
+      return 1
+    fi
+
+    pass="$(echo "${response}" | jq -r '.key // .passphrase // .secret // .pass // empty' 2>/dev/null)"
+    if [ -z "${pass}" ] || [ "${pass}" = "null" ]; then
+      pass="$(echo "${response}" | tr -d '\r\n' | sed -e 's/^ *//' -e 's/ *$//')"
+    fi
+  fi
+
+  if [ -z "${pass}" ]; then
+    echo "⚠️ No key passphrase available (KEY_PASS unset and Worker returned nothing)."
+    return 1
+  fi
+
+  tmp="$(mktemp)"
+  if ! curl -fsSL "${ASSET_URL}" 2>/dev/null \
+    | jq -er --arg k "${JSON_KEY}" '.[$k] // empty' 2>/dev/null \
+    | base64 -d > "${tmp}" 2>/dev/null || [ ! -s "${tmp}" ]; then
+    rm -f "${tmp}"
+    echo "⚠️ Could not fetch or decode '${JSON_KEY}' from the gist."
+    return 1
+  fi
+
+  mkdir -p "${PRIV_DIR}"
+  if ! KEY_PASS="${pass}" openssl enc -d -aes-256-cbc -pbkdf2 -pass env:KEY_PASS -in "${tmp}" 2>/dev/null \
+    | tar -xzC "${PRIV_DIR}" 2>/dev/null; then
+    rm -f "${tmp}"
+    echo "⚠️ Decryption failed. Wrong passphrase or corrupted key archive."
+    return 1
+  fi
+  rm -f "${tmp}"
+
+  find "${PRIV_DIR}" -mindepth 2 -type f -exec mv -t "${PRIV_DIR}" {} + 2>/dev/null || true
+  find "${PRIV_DIR}" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+
+  if own_keys_ok; then
+    return 0
+  fi
+  echo "⚠️ Extracted key fingerprint does not match KEY_FP_EXPECTED."
+  return 1
+}
+
+setup_signing_keys() {
+  KEY_SOURCE=""
+  echo "--> Checking release keys..."
+  if own_keys_ok; then
+    KEY_SOURCE="on disk"
+  elif load_keys; then
+    KEY_SOURCE="gist fallback"
+  fi
+
+  if [ -n "${KEY_SOURCE}" ]; then
+    printf 'PRODUCT_DEFAULT_DEV_CERTIFICATE := vendor/lineage-priv/keys/releasekey\n' > "${PRIV_DIR}/keys.mk"
+    KEY_COUNT=$(ls -1 "${PRIV_DIR}"/*.pk8 2>/dev/null | wc -l)
+    SM="Custom"
+    echo "✅ Release key verified (${KEY_SOURCE}). Building personal release-signed."
+    tg_send "🔑 *Signing:* personal release key (${KEY_SOURCE}, fingerprint verified)"
+  else
+    rm -f "${PRIV_DIR}/keys.mk"
+    KEY_COUNT=0
     SM="Default"
-    tg_send "⚠️ *Asset Status:* Standard fallback active (\`${SM}\`)"
+    echo "⚠️ No verified release key. Building with the test key."
+    tg_send "⚠️ *Release key unavailable.* Building test-signed (not dirty-flash compatible with release builds)."
   fi
 }

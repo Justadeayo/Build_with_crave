@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -e
+
 export TZ="Africa/Lagos"
 
 # ==============================================================================
@@ -26,22 +27,9 @@ fetch_lib "clang_repair.sh"
 fetch_lib "keys.sh"
 fetch_lib "upload.sh"
 
-check_and_install_deps curl jq openssl git rclone
-command -v repo >/dev/null 2>&1 || echo "⚠️ 'repo' not found on PATH — expected preinstalled in the Crave image."
+check_and_install_deps curl jq openssl git bc flex bison rsync zip unzip ssh
 
-
-if ! command -v arm-linux-gnueabi-gcc >/dev/null 2>&1 || ! command -v arm-linux-gnueabi-ld >/dev/null 2>&1; then
-  echo "⚠️ arm-linux-gnueabi toolchain (gcc/ld) incomplete — attempting install..."
-  sudo apt-get update -qq && sudo apt-get install -y gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi || true
-  if command -v arm-linux-gnueabi-gcc >/dev/null 2>&1 && command -v arm-linux-gnueabi-ld >/dev/null 2>&1; then
-    echo "✅ arm-linux-gnueabi toolchain ready."
-  else
-    echo "⚠️ arm-linux-gnueabi toolchain still incomplete — the inline kernel build will fail at the vDSO32 step."
-  fi
-fi
-
-
-
+free -h || true
 
 # ==============================================================================
 # CONFIG
@@ -58,52 +46,49 @@ MANIFEST_LOCAL_REPO="https://github.com/Justadeayo/Manifest.git"
 MANIFEST_LOCAL_BRANCH="main"
 
 OUT_DIR="out/target/product/${DEVICE}"
-GOFILE_RETRY_MAX=8
-GDRIVE_REMOTE="${GDRIVE_REMOTE:-${DEVICE}:DerpFest_Builds}"
 JOBS=$(nproc 2>/dev/null || echo 4)
 SM="Default"
 START_TIME="$(date +%s)"
 
 trap cleanup EXIT INT TERM
-upload_init
 
 banner "${ROM_NAME}" "${DEVICE}" "${REPO_MANIFEST_BRANCH} (full kernel)"
+
 tg_send "🚀 *Build Started!*
+
 📱 *Device:* \`${DEVICE}\`
+
 📦 *ROM:* \`${ROM_NAME}\` (Android 17)
+
 ⏰ *Started at:* $(get_wat_time)"
-
-
-
 
 # ==============================================================================
 # 1. CLEANUP & SOURCE SYNC
 # ==============================================================================
 section "cleaning workspace + syncing sources"
 
+echo "--> Wiping local git changes across all repos (edits AND untracked files)..."
 repo forall -j"${JOBS}" -c 'if [ -n "$(git status --porcelain 2>/dev/null)" ]; then git reset --hard HEAD && git clean -fdx; fi' 2>/dev/null || true
+
+echo "--> Cleaning up workspace lockfiles, local manifest paths, and conflicting hooks..."
 find .repo/ -name "*.lock" -delete 2>/dev/null || true
 find .repo/projects -type d -name hooks -exec rm -rf {} + 2>/dev/null || true
+find .repo/project-objects -type d -name hooks -exec rm -rf {} + 2>/dev/null || true
 
-rm -rf vendor/MiuiCamera \
-       device/xiaomi/violet \
-       kernel/xiaomi/violet \
-       vendor/xiaomi/violet \
-       hardware/xiaomi \
-       hardware/dolby \
-       .repo/local_manifests 2>/dev/null || true
+rm -rf prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 \
+       .repo/local_manifests 2>/dev/null
 
 run_step "Initializing Repository" repo init -u "${REPO_MANIFEST_URL}" -b "${REPO_MANIFEST_BRANCH}" --git-lfs --depth=1
-git clone --depth=1 -b "${MANIFEST_LOCAL_BRANCH}" "${MANIFEST_LOCAL_REPO}" .repo/local_manifests || true
+
+echo "--> Fetching local device manifests..."
+git clone --depth=1 -b "${MANIFEST_LOCAL_BRANCH}" "${MANIFEST_LOCAL_REPO}" .repo/local_manifests
 
 if [ -f /opt/crave/resync.sh ]; then
-  run_step "Syncing with Crave✅" /opt/crave/resync.sh
+  echo "--> Resyncing Sources via Crave..."
+  /opt/crave/resync.sh
 else
   run_step "Syncing Sources" repo sync -c --force-sync --force-remove-dirty --no-tags --no-clone-bundle --prune -j"${JOBS}"
 fi
-
-
-
 
 # ==============================================================================
 # 2. TOOLCHAIN GUARDS + HARDWARE TREES
@@ -113,49 +98,37 @@ section "verifying toolchains + hardware trees"
 ensure_clang "${CLANG_PRJ}" "clang-r584948" "${CLANG_TAG}"
 ensure_clang "${CLANG_PRJ}" "clang-r596125" "${CLANG_TAG}"
 
-
-rm -rf hardware/xiaomi
-run_step "Cloning Xiaomi Hardware" git clone https://github.com/Evolution-X-Devices/hardware_xiaomi -b bka-no-dolby hardware/xiaomi
-rm -rf hardware/xiaomi/packages/DSPVolumeSynchronizer
-
-rm -rf hardware/dolby
-run_step "Cloning Dolby Hardware" git clone https://github.com/adi8900/hardware_dolby -b lunaris hardware/dolby
-echo "✅ Hardware paths configured!"
-
-
-missing_tools
-
-
-
+ensure_cross_tools
 
 
 # ==============================================================================
 # 3. SIGNING ASSETS
 # ==============================================================================
 section "verifying signing assets"
+
 setup_signing_keys
-
-
-
-
 
 # ==============================================================================
 # 4. BUILD
 # ==============================================================================
 section "starting build"
 
+echo "--> Setting up build environment..."
 . build/envsetup.sh
-rm -rf "${OUT_DIR}/obj/KERNEL_OBJ"
+
 lunch "lineage_${DEVICE}-cp2a-user"
+
 make installclean
 
-tg_send "🛠️ *Compilation Started* (m derp)
-⏰ $(get_wat_time)"
+echo "--> Starting compilation..."
 
 export TZ="Africa/Lagos"
 export LC_ALL="C.UTF-8"
-export R8_MAX_HEAP_SIZE=2048M
-export BUILD_BROKEN_MISSING_REQUIRED_MODULES=true
+export R8_MAX_HEAP_SIZE=8192M
+export NINJA_ARGS="-k 0"
+
+tg_send "🛠️ *Compilation Started, grab some coffee and hope for the best*
+⏰ $(get_wat_time)"
 
 m derp
 
@@ -164,26 +137,32 @@ DUR=$(( END_TIME - START_TIME ))
 BUILD_TIME="$(( DUR / 3600 ))h $(( (DUR % 3600) / 60 ))m $(( DUR % 60 ))s"
 
 tg_send "🛠️ *Compilation Finished*
+
 ⏱ *Compile Time:* \`${BUILD_TIME}\`
+
 📤 Now processing/uploading artifacts...
+
 ⏰ $(get_wat_time)"
-
-
-
-
 
 # ==============================================================================
 # 5. ARTIFACT DISPATCH
 # ==============================================================================
 section "uploading to sharing platforms"
+
 dispatch_artifacts
 
 tg_send "🎉 *Build Finished Successfully!*
+
 📱 *Device:* \`${DEVICE}\`
+
 📦 *ROM:* \`${ROM_NAME}\` (Android 17)
+
 🔑 *Profile Mode:* \`${SM}\` (${KEY_COUNT:-0} keys)
+
 ⏱ *Compilation Time:* \`${BUILD_TIME}\`
+
 📏 *Size:* \`${ROM_SIZE}\`
+
 ⏰ *Finished at:* $(get_wat_time)
 
 ${UPLOAD_RESULTS}"

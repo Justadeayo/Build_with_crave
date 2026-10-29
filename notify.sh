@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
+
 # ==============================================================================
 # notify.sh — NOTIFICATION & CREDENTIAL SETUP, STEP/CLEANUP WRAPPERS, DISPLAY
 # ==============================================================================
+
 if [ -f "$(pwd)/.secrets.env" ]; then
   source "$(pwd)/.secrets.env"
   echo "✅ Loaded Telegram credentials"
@@ -38,18 +40,20 @@ _center() {
 
 banner() {
   local rom="$1" device="$2" branch="$3"
-  local W=66 
+  local W=66
 
   clear 2>/dev/null || true
   echo -e "${CYAN}${BOLD}"
-  cat <<'EOF'
- ██████╗ ███████╗██████╗ ██████╗ ███████╗███████╗███████╗████████╗
- ██╔══██╗██╔════╝██╔══██╗██╔══██╗██╔════╝██╔════╝██╔════╝╚══██╔══╝
- ██║  ██║█████╗  ██████╔╝██████╔╝█████╗  █████╗  ███████╗   ██║
- ██║  ██║██╔══╝  ██╔══██╗██╔═══╝ ██╔══╝  ██╔══╝  ╚════██║   ██║
- ██████╔╝███████╗██║  ██║██║     ██║     ███████╗███████║   ██║
- ╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝     ╚══════╝╚══════╝   ╚═╝
-EOF
+  cat <<'ART'
+
+██████╗ ███████╗██████╗ ██████╗ ███████╗███████╗███████╗████████╗
+██╔══██╗██╔════╝██╔══██╗██╔══██╗██╔════╝██╔════╝██╔════╝╚══██╔══╝
+██║  ██║█████╗  ██████╔╝██████╔╝█████╗  █████╗  ███████╗   ██║
+██║  ██║██╔══╝  ██╔══██╗██╔═══╝ ██╔══╝  ██╔══╝  ╚════██║   ██║
+██████╔╝███████╗██║  ██║██║     ███████╗███████╗███████║   ██║
+╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝     ╚══════╝╚══════╝╚══════╝   ╚═╝
+
+ART
   echo ""
   _center "built by Justus26 🔥" "${W}"
   echo ""
@@ -59,8 +63,10 @@ EOF
   local l3="Branch : ${branch}"
   local info_w=0 l
   for l in "${l1}" "${l2}" "${l3}"; do (( ${#l} > info_w )) && info_w=${#l}; done
+
   local indent=$(( (W - info_w) / 2 ))
   (( indent < 0 )) && indent=0
+
   printf "%*s%s\n" "${indent}" "" "${l1}"
   printf "%*s%s\n" "${indent}" "" "${l2}"
   printf "%*s%s\n" "${indent}" "" "${l3}"
@@ -68,46 +74,28 @@ EOF
   echo -e "${RESET}"
 }
 
-BANNER_TG="🅳🅴🅁🅿🅵🅴🆂🆃"
-
-banner_tg() {
-  local rom="$1" device="$2" branch="$3"
-  tg_send "${BANNER_TG}
-🔥 built by Justus26
-📦 *${rom}* (Android 17)
-📱 *${device}*
-🌿 \`${branch}\`
-⏰ $(get_wat_time)"
-}
-
 section() {
   echo ""
   echo "====================================="
-  echo "   $1"
+  echo " $1"
   echo "====================================="
 }
-
-
-
 
 # ==============================================================================
 # SECURE ERROR TRAP
 # ==============================================================================
 cleanup() {
   local exit_code=$?
-
   if [ "$exit_code" -ne 0 ]; then
     echo "❌ Script aborted with exit code ${exit_code}."
     tg_send "🚨 *Build Failed!*
+
 📱 *Device:* \`${DEVICE}\`
 📦 *ROM:* \`${ROM_NAME}\` (Android 17)
 ⚠️ *Exit Code:* \`${exit_code}\`
 ⏰ *Failed at:* $(get_wat_time)"
   fi
 }
-
-
-
 
 # ==============================================================================
 # STEP EXECUTION WRAPPER
