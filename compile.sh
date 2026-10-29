@@ -17,7 +17,7 @@ if ! command -v repo >/dev/null 2>&1; then
 fi
 
 
-free -h || true
+free -h
 
 
 
@@ -57,7 +57,6 @@ MANIFEST_LOCAL_REPO="https://github.com/Justadeayo/Manifest.git"
 MANIFEST_LOCAL_BRANCH="main"
 
 OUT_DIR="out/target/product/${DEVICE}"
-GOFILE_RETRY_MAX=8
 JOBS=$(nproc 2>/dev/null || echo 4)
 SM="Default"
 START_TIME="$(date +%s)"
@@ -136,7 +135,7 @@ find .repo/project-objects -type d -name hooks -exec rm -rf {} + 2>/dev/null || 
 
 
 rm -rf prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 \
-       .repo/local_manifests 2>/dev/null || true
+       .repo/local_manifests 2>/dev/null
 
 
 
@@ -147,7 +146,7 @@ run_step "Initializing Repository" repo init -u "${REPO_MANIFEST_URL}" -b "${REP
 
 
 echo "--> Fetching local device manifests..."
-git clone --depth=1 -b "${MANIFEST_LOCAL_BRANCH}" "${MANIFEST_LOCAL_REPO}" .repo/local_manifests || true
+git clone --depth=1 -b "${MANIFEST_LOCAL_BRANCH}" "${MANIFEST_LOCAL_REPO}" .repo/local_manifests
 
 
 
@@ -379,6 +378,7 @@ fi
 
 
 
+
 # ==============================================================================
 # 3. BUILD COMPILATION (FORCE WAT TIMESTAMPS & CP2A TARGET)
 # ==============================================================================
@@ -394,7 +394,7 @@ echo "--> Starting compilation..."
 
 export TZ="Africa/Lagos"
 export LC_ALL="C.UTF-8"
-export R8_MAX_HEAP_SIZE=4096M
+export R8_MAX_HEAP_SIZE=8192M
 export NINJA_ARGS="-k 0"
 
 
@@ -422,31 +422,15 @@ tg_send "🛠️ *Compilation Finished*
 
 BUILD_TIME="${BUILD_TIME:-unknown}"
 
-# ==============================================================================
-# DISPATCH: GOFILE (ROM + recovery) AND TELEGRAM (JSON)
-# ==============================================================================
-gofile_upload() {
-  local FILE="$1"
-  [ ! -f "${FILE}" ] && return 1
 
-  local ATTEMPT=0 RESPONSE="" LINK=""
-  local HOSTS=("upload.gofile.io" "upload-eu-par.gofile.io" "upload-na-phx.gofile.io")
 
-  while [ "${ATTEMPT}" -lt 8 ]; do
-    local HOST="${HOSTS[$((ATTEMPT % ${#HOSTS[@]}))]}"
-    ATTEMPT=$((ATTEMPT + 1))
-    echo "Uploading attempt ${ATTEMPT} to GoFile (${HOST})..." >&2
-    RESPONSE=$(curl -sS -X POST -F "file=@${FILE}" "https://${HOST}/uploadfile" || true)
-    LINK=$(echo "$RESPONSE" | jq -r '.data.downloadPage // .data.link // empty' 2>/dev/null || true)
-    if [ -n "$LINK" ] && [ "$LINK" != "null" ]; then
-      echo "$LINK"
-      return 0
-    fi
-    echo "⚠️ Attempt ${ATTEMPT} failed. Raw response: ${RESPONSE}" >&2
-    sleep $((ATTEMPT * 2))
-  done
-  return 1
-}
+# ==============================================================================
+# DISPATCH: SOURCEFORGE (ROM, OTA JSON, RECOVERY) + TELEGRAM NOTIFY
+# ==============================================================================
+SF_USER="${SF_USER:-justus-26}"
+SF_PROJECT="${SF_PROJECT:-derp-violet}"
+SF_RECOVERY_DIR="${SF_RECOVERY_DIR:-recovery-derp}"
+SF_KEY="${SF_KEY:-$(pwd)/.ssh/sourceforge_ed25519}"
 
 tg_send_file() {
   local FILE="$1" CAPTION="$2"
@@ -464,26 +448,81 @@ tg_send_file() {
     -F "document=@${FILE}" >/dev/null 2>&1 || true
 }
 
+
+sf_upload() {
+  local FILE="$1" SUB="${2:-}" FNAME DEST_DIR SSH DEST URL CODE i
+  [ -n "${SF_USER:-}" ] || { echo "❌ SF_USER is not set" >&2; return 1; }
+  [ -f "${FILE}" ] || { echo "❌ File not found: ${FILE}" >&2; return 1; }
+
+  FNAME=$(basename "${FILE}")
+  DEST_DIR="${SUB:+$SUB/}"
+  SSH="ssh -i ${SF_KEY} -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30"
+  DEST="${SF_USER},${SF_PROJECT}@frs.sourceforge.net:/home/frs/project/${SF_PROJECT}/${DEST_DIR}"
+
+  for i in 1 2 3 4 5; do
+    rsync -a --partial --timeout=120 --chmod=D755,F644 -e "${SSH}" "${FILE}" "${DEST}" >&2 && break
+    [ "${i}" -eq 5 ] && return 1
+    echo "SourceForge attempt ${i} failed, retrying in 30s..." >&2
+    sleep 30
+  done
+
+  URL="https://sourceforge.net/projects/${SF_PROJECT}/files/${DEST_DIR}${FNAME}/download"
+  CODE=$(curl -sL -r 0-0 -o /dev/null -w '%{http_code}' "${URL}" || true)
+  case "${CODE}" in
+    200|206) ;;
+    *) echo "⚠️ URL check returned HTTP ${CODE} (may just be indexing lag): ${URL}" >&2 ;;
+  esac
+  echo "${URL}"
+}
+
+
+update_ota_json() {
+  local ZIP="$1" URL="$2" JSON="${OUT_DIR}/${DEVICE}.json"
+  [ -f "${JSON}" ] || return 0
+
+  local SIZE
+  SIZE=$(stat -c %s "${ZIP}")
+  jq --arg url "${URL}" --arg id "${ROM_SHA}" --arg fn "$(basename "${ZIP}")" \
+     --argjson size "${SIZE}" --argjson dt "$(date +%s)" '
+    if has("response") then
+      .response[0] += {url:$url, id:$id, filename:$fn, size:$size, datetime:$dt}
+    else
+      . + {url:$url, id:$id, filename:$fn, size:$size, datetime:$dt}
+    end' "${JSON}" > "${JSON}.tmp" && mv "${JSON}.tmp" "${JSON}" \
+    || { rm -f "${JSON}.tmp"; echo "⚠️ Could not update ${DEVICE}.json" >&2; return 1; }
+
+}
+
 BUILD_OK="${BUILD_OK:-0}"
 ROM_ZIP=$(ls -t "${OUT_DIR}"/DerpFest-*.zip 2>/dev/null | head -1 || true)
-RECOVERY_LINK=""
-UPLOAD_RESULTS=""
 ROM_LINK=""
 ROM_SHA=""
+ROM_SIZE="not built"
+RECOVERY_LINK=""
+UPLOAD_RESULTS=""
 
 if [ "${BUILD_OK}" -ne 1 ]; then
-  ROM_SIZE="not built"
   UPLOAD_RESULTS="❌ Build failed. Nothing uploaded."
 elif [ -n "${ROM_ZIP}" ] && [ -f "${ROM_ZIP}" ]; then
   ROM_SIZE=$(du -h "${ROM_ZIP}" | cut -f1)
   ROM_SHA=$(sha256sum "${ROM_ZIP}" | cut -d' ' -f1)
-  ROM_LINK=$(gofile_upload "${ROM_ZIP}" || true)
-  UPLOAD_RESULTS="📤 *GoFile (ROM):* ${ROM_LINK:-upload failed}
+
+  ROM_LINK=$(sf_upload "${ROM_ZIP}" "" || true)
+  if [ -n "${ROM_LINK}" ]; then
+    update_ota_json "${ROM_ZIP}" "${ROM_LINK}"
+    tg_send_file "${OUT_DIR}/${DEVICE}.json" "OTA json"
+  fi
+
+  if [ -f "${OUT_DIR}/recovery.img" ]; then
+    REC_FILE="${OUT_DIR}/derp-recovery-$(date +%Y%m%d).img"
+    cp "${OUT_DIR}/recovery.img" "${REC_FILE}"
+    RECOVERY_LINK=$(sf_upload "${REC_FILE}" "${SF_RECOVERY_DIR}" || true)
+    rm -f "${REC_FILE}"
+  fi
+
+  UPLOAD_RESULTS="📤 *SourceForge (ROM):* ${ROM_LINK:-upload failed}
 🔐 *SHA256:* \`${ROM_SHA}\`"
-  tg_send_file "${OUT_DIR}/${DEVICE}.json" "OTA json"
-  RECOVERY_LINK=$(gofile_upload "${OUT_DIR}/recovery.img" || true)
 else
-  ROM_SIZE="not found"
   UPLOAD_RESULTS="❌ ROM zip not found in ${OUT_DIR}"
 fi
 
@@ -498,4 +537,4 @@ tg_send "🎉 *Build Finished!*
 ⏰ *Finished at:* $(get_wat_time)
 
 ${UPLOAD_RESULTS}
-🧰 *Recovery (GoFile):* ${RECOVERY_LINK:-not uploaded}"
+🧰 *Recovery (SourceForge):* ${RECOVERY_LINK:-not uploaded}"
