@@ -45,7 +45,6 @@ tg_send() {
 export ROM_NAME="${ROM_NAME:-DerpFest}"
 export DEVICE="${DEVICE:-violet}"
 export BUILD_TYPE="${BUILD_TYPE:-user}"
-WORKER_URL="https://REDACTED"
 ASSET_URL="https://gist.githubusercontent.com/Justadeayo/d6543288b98712e5944bb6dec36d2091/raw/4c08760bc151daccc24db8f6a576c43d02a1fa36/keys.json"
 JSON_KEY="violet"
 PRIV_DIR="vendor/lineage-priv/keys"
@@ -176,29 +175,12 @@ own_keys_ok() {
 }
 
 load_keys() {
-  local pass tmp response tmp_resp http_code
+  local pass tmp
 
-  if [ -n "${KEY_PASS}" ]; then
-    pass="${KEY_PASS}"
-  else
-    tmp_resp="$(mktemp)"
-    http_code="$(curl -sSL -w "%{http_code}" -o "${tmp_resp}" --max-time 10 "${WORKER_URL}/get-key" 2>/dev/null)"
-    response="$(cat "${tmp_resp}")"
-    rm -f "${tmp_resp}"
-
-    if [ "${http_code}" -ne 200 ]; then
-      echo "⚠️ Worker request failed with HTTP status ${http_code}."
-      return 1
-    fi
-
-    pass="$(echo "${response}" | jq -r '.key // .passphrase // .secret // .pass // empty' 2>/dev/null)"
-    if [ -z "${pass}" ] || [ "${pass}" = "null" ]; then
-      pass="$(echo "${response}" | tr -d '\r\n' | sed -e 's/^ *//' -e 's/ *$//')"
-    fi
-  fi
+  pass="${KEY_PASS}"
 
   if [ -z "${pass}" ]; then
-    echo "⚠️ No key passphrase available (KEY_PASS unset and Worker returned nothing)."
+    echo "⚠️ No key passphrase available (KEY_PASS unset)."
     return 1
   fi
 

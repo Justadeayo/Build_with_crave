@@ -4,10 +4,10 @@
 #
 # WHAT THIS DOES vs THE REAL SCRIPT:
 #   REAL (unchanged, actually executed):
-#     - tg_send()      -> hits your real WORKER_URL, real Telegram message
+#     - tg_send()      -> real Telegram message via .secrets.env
 #     - run_step()     -> real wrapper: start/success/fail notifications, real exit-on-failure
 #     - cleanup()/trap -> real EXIT/INT/TERM handling
-#     - key decrypt    -> real curl to WORKER_URL/get-key + real gist fetch (tiny payload)
+#     - key decrypt    -> real KEY_PASS from .secrets.env + real gist fetch (tiny payload)
 #     - gofile_upload() -> real upload to GoFile, real API response parsing
 #   MOCKED (AOSP-specific, cannot run without host toolchain + huge source tree):
 #     - repo init / repo sync / crave resync  -> replaced with mkdir + sleep (proves control flow only)
@@ -59,14 +59,18 @@ check_and_install_deps() {
 check_and_install_deps curl jq openssl rclone
 
 # ==============================================================================
-# NOTIFICATION & KEY RELAY CONFIGURATION (REAL — same as compile.sh)
+# NOTIFICATION & KEY CONFIGURATION (REAL — same as compile.sh)
 # ==============================================================================
-WORKER_URL="https://REDACTED"
+if [ -f "$(pwd)/.secrets.env" ]; then
+  source "$(pwd)/.secrets.env"
+fi
 
 tg_send() {
   local msg="$1"
-  if [ -n "${WORKER_URL}" ]; then
-    curl -sS -X POST "${WORKER_URL}" \
+  if [ -n "${TELEGRAM_BOT_TOKEN}" ] && [ -n "${TELEGRAM_CHAT_ID}" ]; then
+    curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+      -d "chat_id=${TELEGRAM_CHAT_ID}" \
+      -d "parse_mode=Markdown" \
       --data-urlencode "text=${msg}" >/dev/null 2>&1 || true
   fi
 }
@@ -159,23 +163,15 @@ run_step "Cloning Xiaomi Hardware" bash -c 'sleep 1 && mkdir -p hardware/xiaomi'
 run_step "Cloning Dolby Hardware" bash -c 'sleep 1 && mkdir -p hardware/dolby'
 
 # ==============================================================================
-# 3. REAL: key relay check (tiny payload, exercises actual WORKER_URL + gist)
+# 3. REAL: key check (tiny payload, exercises KEY_PASS + gist)
 # ==============================================================================
 mkdir -p vendor/lineage-priv/keys
 ASSET_URL="${ASSET_URL:-https://gist.githubusercontent.com/Justadeayo/6742bf0ae5ee32d09c9326a22aed1018/raw/6899053ffae911028507e978e3d8e97c2b49fab2/keys.json}"
 JSON_KEY="my-signing-keys"   # matches the key name your jq -R wrapper writes
 
-KEY_PASS_RAW=$(curl -sSL "${WORKER_URL}/get-key" || true)
-KEY_PASS=$(printf '%s' "${KEY_PASS_RAW}" | tr -d '\r\n' | sed -e 's/^ *//' -e 's/ *$//')
-
 if [ -n "${KEY_PASS}" ]; then
-  echo "🔑 Worker key relay reachable — passphrase received (${#KEY_PASS} chars)."
-  if [ "${KEY_PASS_RAW}" != "${KEY_PASS}" ]; then
-    echo "   ⚠️ note: raw Worker response had leading/trailing whitespace or CRLF — trimmed before use."
-  fi
+  echo "🔑 KEY_PASS loaded from .secrets.env (${#KEY_PASS} chars)."
 
-  # Termux has no standard writable /tmp by default — use a local scratch dir
-  # instead (inside test-workspace, which cleanup() already removes on exit).
   KTMP="keydebug"
   mkdir -p "${KTMP}"
 
@@ -269,15 +265,15 @@ if [ -n "${KEY_PASS}" ]; then
   else
     echo "   ❌ [5/5] openssl decrypt failed:"
     sed 's/^/       /' "${KTMP}/openssl.err"
-    echo "       → since the self-test above passed, this means either the WRONG passphrase"
-    echo "         is being returned by the Worker, or the gist's ciphertext doesn't match"
+    echo "       → since the self-test above passed, this means either the WRONG KEY_PASS"
+    echo "         is in .secrets.env, or the gist's ciphertext doesn't match"
     echo "         what was encrypted with this passphrase."
   fi
   rm -rf "${KTMP}"
 
   SM="Custom"
 else
-  echo "⚠️ Could not retrieve decryption passphrase from Worker (check WORKER_URL reachability)."
+  echo "⚠️ KEY_PASS is not set in .secrets.env."
   SM="Default"
 fi
 tg_send "🔑 *[TEST] Key Relay Status:* \`${SM}\`"
