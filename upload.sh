@@ -81,6 +81,12 @@ crave_pull_if_missing() {
 }
 
 dispatch_artifacts() {
+  if [ "${SKIP_UPLOAD:-0}" = "1" ]; then
+    UPLOAD_RESULTS="⏭️ Upload skipped (test build)"$'\n'
+    echo "--> SKIP_UPLOAD=1, not uploading artifacts."
+    return 0
+  fi
+  
   echo "--> Processing build artifacts..."
 
   local JSON_FILE="${OUT_DIR}/${DEVICE}.json"

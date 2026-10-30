@@ -483,7 +483,10 @@ ROM_SIZE="not built"
 RECOVERY_LINK=""
 UPLOAD_RESULTS=""
 
-if [ "${BUILD_OK}" -ne 1 ]; then
+if [ "${SKIP_UPLOAD:-0}" = "1" ]; then
+  UPLOAD_RESULTS="⏭️ Upload skipped (test build)"
+  echo "--> SKIP_UPLOAD=1, not uploading artifacts."
+elif [ "${BUILD_OK}" -ne 1 ]; then
   UPLOAD_RESULTS="❌ Build failed. Nothing uploaded."
 elif [ -n "${ROM_ZIP}" ] && [ -f "${ROM_ZIP}" ]; then
   ROM_SIZE=$(du -h "${ROM_ZIP}" | cut -f1)
