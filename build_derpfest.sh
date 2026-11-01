@@ -118,7 +118,7 @@ echo "--> Setting up build environment..."
 
 lunch "lineage_${DEVICE}-cp2a-user"
 
-make installclean
+# make installclean
 
 echo "--> Starting compilation..."
 
