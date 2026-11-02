@@ -53,7 +53,7 @@ KEY_FP_EXPECTED="6B:E0:C5:88:6C:C1:FD:B7:52:48:8A:4F:4A:B6:C3:C1:AA:A7:23:27:20:
 REPO_MANIFEST_URL="https://github.com/DerpFest-AOSP/android_manifest"
 REPO_MANIFEST_BRANCH="17"
 MANIFEST_LOCAL_REPO="https://github.com/Justadeayo/Manifest.git"
-MANIFEST_LOCAL_BRANCH="main"
+MANIFEST_LOCAL_BRANCH="${MANIFEST_LOCAL_BRANCH:-main}"
 
 OUT_DIR="out/target/product/${DEVICE}"
 JOBS=$(nproc 2>/dev/null || echo 4)

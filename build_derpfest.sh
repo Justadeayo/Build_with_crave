@@ -37,13 +37,12 @@ free -h || true
 export ROM_NAME="${ROM_NAME:-DerpFest}"
 export DEVICE="${DEVICE:-violet}"
 export BUILD_TYPE="${BUILD_TYPE:-user}"
-export BUILD_USERNAME="${BUILD_USERNAME:-Justus26}"
-export BUILD_HOSTNAME="${BUILD_HOSTNAME:-crave}"
+export BUILD_USERNAME="Justus26"
 
 REPO_MANIFEST_URL="https://github.com/DerpFest-AOSP/android_manifest"
 REPO_MANIFEST_BRANCH="17"
 MANIFEST_LOCAL_REPO="https://github.com/Justadeayo/Manifest.git"
-MANIFEST_LOCAL_BRANCH="main"
+MANIFEST_LOCAL_BRANCH="${MANIFEST_LOCAL_BRANCH:-main}"
 
 OUT_DIR="out/target/product/${DEVICE}"
 JOBS=$(nproc 2>/dev/null || echo 4)
@@ -91,9 +90,9 @@ else
 fi
 
 # ==============================================================================
-# 2. TOOLCHAIN GUARDS + HARDWARE TREES
+# 2. TOOLCHAIN GUARDS
 # ==============================================================================
-section "verifying toolchains + hardware trees"
+section "verifying toolchains"
 
 ensure_clang "${CLANG_PRJ}" "clang-r584948" "${CLANG_TAG}"
 ensure_clang "${CLANG_PRJ}" "clang-r596125" "${CLANG_TAG}"
@@ -126,6 +125,7 @@ export TZ="Africa/Lagos"
 export LC_ALL="C.UTF-8"
 export R8_MAX_HEAP_SIZE=8192M
 export NINJA_ARGS="-k 0"
+export BUILD_USERNAME="Justus26"
 
 tg_send "🛠️ *Compilation Started, grab some coffee and hope for the best*
 ⏰ $(get_wat_time)"
