@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 
-set -e
-
 export TZ="Africa/Lagos"
 
 # ==============================================================================
@@ -148,6 +146,67 @@ tg_send "🛠️ *Compilation Finished*
 # 5. ARTIFACT DISPATCH
 # ==============================================================================
 section "uploading to sharing platforms"
+
+dispatch_artifacts
+
+tg_send "🎉 *Build Finished Successfully!*
+
+📱 *Device:* \`${DEVICE}\`
+
+📦 *ROM:* \`${ROM_NAME}\` (Android 17)
+
+🔑 *Profile Mode:* \`${SM}\` (${KEY_COUNT:-0} keys)
+
+⏱ *Compilation Time:* \`${BUILD_TIME}\`
+
+📏 *Size:* \`${ROM_SIZE}\`
+
+⏰ *Finished at:* $(get_wat_time)
+
+${UPLOAD_RESULTS}"
+
+section "process finished successfully 🎉"
+
+# ==============================================
+# PLEASE ALLOW ME, IT'S SAME DEVICE, SAME ROM JUST CHANGE IN BRANCH FOR FINAL TEST
+# each build takes just an hour and few minutes.
+# ==============================================
+rm -rf device/xiaomi/violet
+
+git clone --depth=1 https://github.com/Justadeayo/device_xiaomi_violet -b dev device/xiaomi/violet
+
+. build/envsetup.sh
+
+lunch "lineage_${DEVICE}-cp2a-user"
+
+make installclean
+
+export TZ="Africa/Lagos"
+export LC_ALL="C.UTF-8"
+export R8_MAX_HEAP_SIZE=8192M
+export NINJA_ARGS="-k 0"
+export BUILD_USERNAME="Justus26"
+
+tg_send "🛠️ *Compilation Started, grab some coffee and hope for sec best*
+⏰ $(get_wat_time)"
+
+m derp
+
+END_TIME="$(date +%s)"
+DUR=$(( END_TIME - START_TIME ))
+BUILD_TIME="$(( DUR / 3600 ))h $(( (DUR % 3600) / 60 ))m $(( DUR % 60 ))s"
+
+tg_send "🛠️ *Compilation Finished*
+
+⏱ *Compile Time:* \`${BUILD_TIME}\`
+
+📤 Now processing/uploading artifacts...
+
+⏰ $(get_wat_time)"
+
+section "uploading to sharing platforms"
+
+export SF_PROJECT=derp-m31
 
 dispatch_artifacts
 
